@@ -1,0 +1,33 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.sonora.app'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "com.sonora.app"
+        minSdk 24
+        // Volontairement 32 : evite les contraintes Android 13+ sur la
+        // permission de notification et Android 14+ sur les types de
+        // services de premier plan. Rien a demander a l'utilisateur.
+        targetSdk 32
+        versionCode 1
+        versionName "1.0"
+    }
+
+    buildTypes {
+        debug {
+            minifyEnabled false
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+dependencies {
+}
