@@ -9,10 +9,9 @@ import android.webkit.WebView;
  * WebView qui ne signale JAMAIS a Chromium que sa fenetre est passee en
  * arriere-plan.
  *
- * ATTENTION : super() doit recevoir VISIBLE dans TOUS les cas, sans aucune
- * exception. Quand une application passe en arriere-plan, Android met sa
- * decor view a GONE, et cette valeur descend jusqu'ici. Filtrer le cas GONE
- * revient donc a laisser passer exactement le signal qu'on veut bloquer.
+ * ATTENTION : super() doit recevoir VISIBLE dans TOUS les cas. Android envoie
+ * GONE quand l'app passe en arriere-plan : filtrer ce cas revient a laisser
+ * passer exactement le signal qu'on veut bloquer.
  */
 public class BackgroundWebView extends WebView {
 
