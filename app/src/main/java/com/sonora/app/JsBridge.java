@@ -2,15 +2,12 @@ package com.sonora.app;
 
 import android.webkit.JavascriptInterface;
 
-/**
- * Recoit les infos du lecteur depuis la page et les transmet au service.
- *
- * Le site Sonora renseigne deja navigator.mediaSession (titre, pochette,
- * boutons). Dans Chrome, Android lit ca tout seul. Dans une WebView, non :
- * rien n'est transmis au systeme. On recupere donc les memes informations
- * a la source, sans rien changer au site.
- */
 public class JsBridge {
+
+    @JavascriptInterface
+    public void onPont() {
+        KeepAliveService.pousserPont();
+    }
 
     @JavascriptInterface
     public void onMeta(String titre, String artiste, String album, String pochette) {
