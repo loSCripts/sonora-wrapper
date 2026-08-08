@@ -9,15 +9,10 @@ import android.webkit.WebView;
  * WebView qui ne signale JAMAIS a Chromium que sa fenetre est passee en
  * arriere-plan.
  *
- * Sans ca, des que l'app quitte le premier plan, Chromium bascule le document
- * en "hidden" et declenche visibilitychange -- dans la page ET dans toutes ses
- * iframes. Les lecteurs embarques reagissent en coupant le son.
- *
- * En forcant systematiquement VISIBLE, document.visibilityState reste
- * "visible" en permanence, exactement comme le comportement observe sur Opera.
- *
- * Le test "!= View.GONE" laisse passer le cas ou la vue est reellement retiree
- * (destruction de l'activite), pour ne pas empecher le nettoyage.
+ * ATTENTION : super() doit recevoir VISIBLE dans TOUS les cas, sans aucune
+ * exception. Quand une application passe en arriere-plan, Android met sa
+ * decor view a GONE, et cette valeur descend jusqu'ici. Filtrer le cas GONE
+ * revient donc a laisser passer exactement le signal qu'on veut bloquer.
  */
 public class BackgroundWebView extends WebView {
 
@@ -35,10 +30,6 @@ public class BackgroundWebView extends WebView {
 
     @Override
     protected void onWindowVisibilityChanged(int visibility) {
-        if (visibility != View.GONE) {
-            super.onWindowVisibilityChanged(View.VISIBLE);
-        } else {
-            super.onWindowVisibilityChanged(visibility);
-        }
+        super.onWindowVisibilityChanged(View.VISIBLE);
     }
 }

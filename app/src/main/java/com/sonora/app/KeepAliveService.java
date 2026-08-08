@@ -10,16 +10,7 @@ import android.os.Build;
 import android.os.IBinder;
 
 /**
- * Service de premier plan minimal.
- *
- * Empecher visibilitychange ne suffit pas sur Android : sans notification
- * persistante, le systeme (et surtout la gestion agressive de la batterie
- * chez Oppo/ColorOS) gele ou tue le processus quelques secondes apres le
- * passage en arriere-plan, et le son s'arrete quand meme.
- *
- * Ce service ne fait rien d'autre qu'exister pour maintenir le processus
- * vivant. Il n'y a pas de controles de lecture dans la notification :
- * elle sert uniquement d'ancre.
+ * Service de premier plan minimal : empeche ColorOS de geler le processus.
  */
 public class KeepAliveService extends Service {
 

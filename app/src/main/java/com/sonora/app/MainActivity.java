@@ -45,15 +45,12 @@ public class MainActivity extends Activity {
         s.setUseWideViewPort(true);
         s.setCacheMode(WebSettings.LOAD_DEFAULT);
 
-        // Autorise la lecture audio/video sans geste utilisateur prealable,
-        // sinon les iframes refusent de demarrer toutes seules.
+        // Autorise la lecture audio/video sans geste utilisateur prealable.
         s.setMediaPlaybackRequiresUserGesture(false);
 
-        // Cookies tiers : necessaires pour les lecteurs embarques en iframe.
         CookieManager.getInstance().setAcceptCookie(true);
         CookieManager.getInstance().setAcceptThirdPartyCookies(webView, true);
 
-        // Tout reste dans le WebView, rien ne part vers le navigateur externe.
         webView.setWebViewClient(new WebViewClient());
         webView.setWebChromeClient(new FullscreenChromeClient());
 
@@ -72,12 +69,8 @@ public class MainActivity extends Activity {
     }
 
     /**
-     * IMPORTANT : on n'appelle deliberement NI webView.onPause()
-     * NI webView.pauseTimers() ici.
-     *
-     * C'est precisement ce que font la plupart des wrappers WebView, et c'est
-     * ce qui coupe le son. En s'abstenant, le JS et l'audio continuent de
-     * tourner quand l'utilisateur quitte l'application.
+     * On n'appelle deliberement NI webView.onPause() NI pauseTimers() ici.
+     * C'est ce que font la plupart des wrappers, et c'est ce qui coupe le son.
      */
     @Override
     protected void onPause() {
@@ -87,7 +80,6 @@ public class MainActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
-        // Rien a reprendre : la page n'a jamais ete mise en pause.
     }
 
     @Override
@@ -100,8 +92,7 @@ public class MainActivity extends Activity {
             webView.goBack();
             return;
         }
-        // On met l'app en arriere-plan au lieu de la detruire :
-        // detruire l'activite tuerait la lecture en cours.
+        // Arriere-plan plutot que destruction : detruire tuerait la lecture.
         moveTaskToBack(true);
     }
 
@@ -115,8 +106,6 @@ public class MainActivity extends Activity {
         }
         super.onDestroy();
     }
-
-    // --- Plein ecran pour les lecteurs embarques -------------------------
 
     private class FullscreenChromeClient extends WebChromeClient {
 
