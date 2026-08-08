@@ -49,6 +49,15 @@ public class KeepAliveService extends Service {
     private long dureeMs = 0;
     private long positionMs = 0;
     private final Set<String> actions = new HashSet<String>();
+    private String dernierChemin = null;
+
+    /** Remonte quel chemin a effectivement pilote le lecteur (diagnostic). */
+    public static void pousserChemin(String c) {
+        final KeepAliveService s = instance;
+        if (s == null) { return; }
+        s.dernierChemin = c;
+        s.rafraichir();
+    }
 
     public static void pousserPont() {
         final KeepAliveService s = instance;
@@ -246,6 +255,7 @@ public class KeepAliveService extends Service {
         } else {
             b = new Notification.Builder(this);
         }
+        if (dernierChemin != null) { b.setSubText(dernierChemin); }
         b.setSmallIcon(android.R.drawable.ic_media_play)
          .setContentIntent(ouvrirApp())
          .setOngoing(true)

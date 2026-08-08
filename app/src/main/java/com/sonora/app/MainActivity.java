@@ -11,6 +11,7 @@ import android.webkit.CookieManager;
 import android.webkit.WebChromeClient;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
+import android.webkit.ValueCallback;
 import android.webkit.WebViewClient;
 import android.widget.FrameLayout;
 
@@ -43,6 +44,7 @@ public class MainActivity extends Activity {
       + "try{o(a,f)}catch(e){}ea()};"
       + "window.__snbCall=function(a,d){var f=H[a];if(f){try{"
       + "f({action:a,seekOffset:d,seekTime:d})}catch(e){}}};"
+      + "window.__snbHas=function(a){return !!H[a]};"
       + "var P=Object.getPrototypeOf(ms);"
       + "var dm=Object.getOwnPropertyDescriptor(P,'metadata');"
       + "if(dm&&dm.set){Object.defineProperty(ms,'metadata',{configurable:true,"
@@ -61,6 +63,40 @@ public class MainActivity extends Activity {
       + "setInterval(function(){em();ee();ea()},2000);"
       + "})();";
 
+
+    /**
+     * Trois chemins, essayes dans l'ordre. Le premier qui aboutit gagne et
+     * renvoie son nom, ce qui sert aussi de diagnostic dans la notification.
+     *
+     *  ms  : le gestionnaire mediaSession capture par le greffon (le plus
+     *        fidele : c'est exactement ce que fait Chrome)
+     *  fn  : les primitives du site (resume/halt/next/prev/seekAbs), qui sont
+     *        ce que les gestionnaires mediaSession appellent eux-memes
+     *  dom : clic sur les vrais boutons #playBtn / #next / #prev
+     *
+     * Les chemins 2 et 3 ne dependent d'aucun timing d'injection : ils
+     * fonctionnent meme si le greffon s'est installe apres session().
+     */
+    private static final String JS_ACTION =
+        "(function(a,d){"
+      + "try{if(window.__snbHas&&window.__snbHas(a)){window.__snbCall(a,d);return 'ms'}}catch(e){}"
+      + "try{"
+      + "if(a==='play'){if(typeof resume==='function'){resume();"
+      + "try{setIcons(true)}catch(e){}try{majEtatSession('playing')}catch(e){}return 'fn'}}"
+      + "else if(a==='pause'){if(typeof halt==='function'){halt();"
+      + "try{setIcons(false)}catch(e){}try{majEtatSession('paused')}catch(e){}return 'fn'}}"
+      + "else if(a==='nexttrack'){if(typeof next==='function'){next(false);return 'fn'}}"
+      + "else if(a==='previoustrack'){if(typeof prev==='function'){prev();return 'fn'}}"
+      + "else if(a==='seekforward'){if(typeof seekAbs==='function'){"
+      + "seekAbs((typeof pos==='function'?pos():0)+d);return 'fn'}}"
+      + "else if(a==='seekbackward'){if(typeof seekAbs==='function'){"
+      + "seekAbs(Math.max(0,(typeof pos==='function'?pos():0)-d));return 'fn'}}"
+      + "}catch(e){}"
+      + "try{var m={play:'#playBtn',pause:'#playBtn',nexttrack:'#next',previoustrack:'#prev'};"
+      + "var s=m[a];if(s){var b=document.querySelector(s);if(b){b.click();return 'dom'}}}catch(e){}"
+      + "return 'rien';"
+      + "})('%A%',%D%)";
+
     private static WeakReference<WebView> sWeb = new WeakReference<>(null);
 
     private BackgroundWebView webView;
@@ -72,14 +108,28 @@ public class MainActivity extends Activity {
     public static void appelerJs(String action, int secondes) {
         final WebView w = sWeb.get();
         if (w == null) {
+            KeepAliveService.pousserChemin("pas de vue");
             return;
         }
-        final String js = "window.__snbCall&&window.__snbCall('"
-                + action + "'," + secondes + ")";
+        final String js = JS_ACTION
+                .replace("%A%", action)
+                .replace("%D%", String.valueOf(secondes));
         w.post(new Runnable() {
             @Override
             public void run() {
-                w.evaluateJavascript(js, null);
+                try {
+                    w.evaluateJavascript(js, new ValueCallback<String>() {
+                        @Override
+                        public void onReceiveValue(String v) {
+                            if (v != null) {
+                                v = v.replace("\"", "").trim();
+                            }
+                            KeepAliveService.pousserChemin(v);
+                        }
+                    });
+                } catch (Throwable t) {
+                    KeepAliveService.pousserChemin("erreur");
+                }
             }
         });
     }
@@ -106,6 +156,9 @@ public class MainActivity extends Activity {
         s.setUseWideViewPort(true);
         s.setCacheMode(WebSettings.LOAD_DEFAULT);
         s.setMediaPlaybackRequiresUserGesture(false);
+
+        // Permet au site de se reconnaitre dans l'APK (navInfo/notifMessage)
+        s.setUserAgentString(s.getUserAgentString() + " SonoraAPK/1.4");
 
         CookieManager.getInstance().setAcceptCookie(true);
         CookieManager.getInstance().setAcceptThirdPartyCookies(webView, true);
