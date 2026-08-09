@@ -4,6 +4,8 @@ import android.app.Activity;
 import android.content.Intent;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowManager;
@@ -23,59 +25,60 @@ public class MainActivity extends Activity {
     private static final String SITE_URL = "https://sonora-sandy.vercel.app";
 
     /**
-     * Greffon injecte dans la page.
+     * Greffon injecte dans la page. Il n'ecrase rien et ne modifie pas le site.
      *
-     * Il n'ecrase rien : il enveloppe setActionHandler et les proprietes
-     * metadata / playbackState / setPositionState pour recopier vers Android
-     * ce que le site declare deja, puis passe la main au code d'origine.
-     * Zero modification du site.
+     * CHANGEMENT v1.5 : l'etat de lecture et la position ne sont PLUS lus dans
+     * navigator.mediaSession. Ils sont pris directement a la source du site :
+     *
+     *   position / duree  ->  len() et pos(), exactement ce qui alimente la
+     *                         barre de progression affichee dans l'app
+     *   lecture / pause   ->  YTP.getPlayerState() pour YouTube,
+     *                         l'element <audio> pour Audius,
+     *                         sinon l'etiquette du bouton #playBtn
+     *
+     * mediaSession ne sert plus que de repli. Le greffon publie aussi la
+     * source reellement utilisee (ex. "yt/site"), affichee en petit dans la
+     * notification : si quelque chose ne remonte pas, on voit lequel des
+     * etages a lache sans avoir a brancher un cable.
      */
     private static final String GREFFON =
-        "(function(){if(window.__snb)return;window.__snb=1;"
-      + "var ms=navigator.mediaSession;if(!ms)return;var H={};"
-      + "function em(){try{var v=ms.metadata;var u='';"
-      + "if(v&&v.artwork&&v.artwork.length){u=v.artwork[v.artwork.length-1].src}"
-      + "SonoraNative.onMeta(v&&v.title?v.title:'',v&&v.artist?v.artist:'',"
-      + "v&&v.album?v.album:'',u)}catch(e){}}"
-      + "function ee(){try{SonoraNative.onState(ms.playbackState==='playing')}catch(e){}}"
-      + "function ea(){try{SonoraNative.onActions(Object.keys(H).join(','))}catch(e){}}"
-      + "var o=ms.setActionHandler.bind(ms);"
-      + "ms.setActionHandler=function(a,f){if(f){H[a]=f}else{delete H[a]}"
-      + "try{o(a,f)}catch(e){}ea()};"
-      + "window.__snbCall=function(a,d){var f=H[a];if(f){try{"
-      + "f({action:a,seekOffset:d,seekTime:d})}catch(e){}}};"
-      + "window.__snbHas=function(a){return !!H[a]};"
-      + "var P=Object.getPrototypeOf(ms);"
-      + "var dm=Object.getOwnPropertyDescriptor(P,'metadata');"
-      + "if(dm&&dm.set){Object.defineProperty(ms,'metadata',{configurable:true,"
-      + "get:function(){return dm.get.call(ms)},"
-      + "set:function(v){dm.set.call(ms,v);em()}})}"
-      + "var dp=Object.getOwnPropertyDescriptor(P,'playbackState');"
-      + "if(dp&&dp.set){Object.defineProperty(ms,'playbackState',{configurable:true,"
-      + "get:function(){return dp.get.call(ms)},"
-      + "set:function(v){dp.set.call(ms,v);ee()}})}"
-      + "if(ms.setPositionState){var sp=ms.setPositionState.bind(ms);"
-      + "ms.setPositionState=function(s){try{sp(s)}catch(e){}try{if(s)"
-      + "SonoraNative.onPosition(Math.round((s.duration||0)*1000),"
-      + "Math.round((s.position||0)*1000))}catch(e){}}}"
-      + "try{SonoraNative.onPont()}catch(e){}"
-      + "em();ee();"
-      + "setInterval(function(){em();ee();ea()},2000);"
-      + "})();";
+        "(function(){var N=window.SonoraNative;if(!N)return;if(window.__snb)return;window.__snb=1;var"
+          + " ms=navigator.mediaSession||null;var H={};if(ms&&ms.setActionHandler){var o=ms.setActionHand"
+          + "ler.bind(ms);ms.setActionHandler=function(a,f){if(f){H[a]=f}else{delete H[a]}try{o(a,f)}catc"
+          + "h(e){}};}window.__snbCall=function(a,d){var f=H[a];if(!f)return false;try{f({action:a,seekOf"
+          + "fset:d,seekTime:d})}catch(e){}return true};window.__snbHas=function(a){return !!H[a]};var pd"
+          + "=0,pp=0;if(ms&&ms.setPositionState){var sp=ms.setPositionState.bind(ms);ms.setPositionState="
+          + "function(s){try{sp(s)}catch(e){}try{if(s){pd=s.duration||0;pp=s.position||0}}catch(e){}};}va"
+          + "r srcE=\"?\",srcP=\"?\";function elAudio(){try{return document.getElementById(\"audio\")}catch(e){"
+          + "return null}}function etat(){try{if(typeof engine!==\"undefined\"){if(engine===\"yt\"&&typeof YT"
+          + "P!==\"undefined\"&&YTP&&YTP.getPlayerState){srcE=\"yt\";return YTP.getPlayerState()===1}if(engin"
+          + "e===\"audio\"){var a=elAudio();if(a){srcE=\"audio\";return !a.paused}}}}catch(e){}try{var b=docu"
+          + "ment.getElementById(\"playBtn\");if(b){var l=(b.getAttribute(\"aria-label\")||\"\").toLowerCase();"
+          + "if(l){srcE=\"dom\";return l.indexOf(\"pause\")===0}}}catch(e){}try{if(ms){srcE=\"ms\";return ms.pl"
+          + "aybackState===\"playing\"}}catch(e){}srcE=\"?\";return false;}function temps(){var d=0,p=0;try{i"
+          + "f(typeof len===\"function\")d=len()||0}catch(e){}try{if(typeof pos===\"function\")p=pos()||0}cat"
+          + "ch(e){}if(isFinite(d)&&d>0){srcP=\"site\";return [d,isFinite(p)?p:0]}if(pd>0){srcP=\"ms\";return"
+          + " [pd,pp]}try{var a=elAudio();if(a&&isFinite(a.duration)&&a.duration>0){srcP=\"audio\";return ["
+          + "a.duration,a.currentTime||0]}}catch(e){}srcP=\"?\";return [0,0];}var mMeta=\"\",mEtat=null,mAct="
+          + "\"\",mSrc=\"\",n=0;function battement(){n++;if(n%10===0){mMeta=\"\";mEtat=null;mAct=\"\";mSrc=\"\"}try"
+          + "{var v=ms?ms.metadata:null,u=\"\";var t=v&&v.title?v.title:\"\";var ar=v&&v.artist?v.artist:\"\";v"
+          + "ar al=v&&v.album?v.album:\"\";if(v&&v.artwork&&v.artwork.length)u=v.artwork[v.artwork.length-1"
+          + "].src||\"\";var sig=t+\"|\"+ar+\"|\"+al+\"|\"+u;if(sig!==mMeta){mMeta=sig;N.onMeta(t,ar,al,u)}}catch"
+          + "(e){}var e2=etat();var tp=temps();try{N.onPosition(Math.round(tp[0]*1000),Math.round(tp[1]*1"
+          + "000))}catch(e){}if(e2!==mEtat){mEtat=e2;try{N.onState(e2)}catch(e){}}try{var la=Object.keys("
+          + "H).join(\",\");if(la!==mAct){mAct=la;N.onActions(la)}}catch(e){}var s=srcE+\"/\"+srcP;if(s!==mSr"
+          + "c){mSrc=s;try{N.onSource(s)}catch(e){}}}try{N.onPont()}catch(e){}battement();setInterval(bat"
+          + "tement,1000);})();";
 
 
     /**
      * Trois chemins, essayes dans l'ordre. Le premier qui aboutit gagne et
      * renvoie son nom, ce qui sert aussi de diagnostic dans la notification.
      *
-     *  ms  : le gestionnaire mediaSession capture par le greffon (le plus
-     *        fidele : c'est exactement ce que fait Chrome)
+     *  ms  : le gestionnaire mediaSession capture par le greffon
      *  fn  : les primitives du site (resume/halt/next/prev/seekAbs), qui sont
      *        ce que les gestionnaires mediaSession appellent eux-memes
      *  dom : clic sur les vrais boutons #playBtn / #next / #prev
-     *
-     * Les chemins 2 et 3 ne dependent d'aucun timing d'injection : ils
-     * fonctionnent meme si le greffon s'est installe apres session().
      */
     private static final String JS_ACTION =
         "(function(a,d){"
@@ -87,6 +90,7 @@ public class MainActivity extends Activity {
       + "try{setIcons(false)}catch(e){}try{majEtatSession('paused')}catch(e){}return 'fn'}}"
       + "else if(a==='nexttrack'){if(typeof next==='function'){next(false);return 'fn'}}"
       + "else if(a==='previoustrack'){if(typeof prev==='function'){prev();return 'fn'}}"
+      + "else if(a==='seekto'){if(typeof seekAbs==='function'){seekAbs(d);return 'fn'}}"
       + "else if(a==='seekforward'){if(typeof seekAbs==='function'){"
       + "seekAbs((typeof pos==='function'?pos():0)+d);return 'fn'}}"
       + "else if(a==='seekbackward'){if(typeof seekAbs==='function'){"
@@ -98,6 +102,8 @@ public class MainActivity extends Activity {
       + "})('%A%',%D%)";
 
     private static WeakReference<WebView> sWeb = new WeakReference<>(null);
+
+    private final Handler differe = new Handler(Looper.getMainLooper());
 
     private BackgroundWebView webView;
     private FrameLayout root;
@@ -134,6 +140,22 @@ public class MainActivity extends Activity {
         });
     }
 
+    /**
+     * Le greffon se protege lui-meme contre la double installation ET refuse
+     * de s'installer tant que le pont n'existe pas. On peut donc le renvoyer
+     * autant de fois qu'on veut : c'est le filet contre les pages qui se
+     * construisent en plusieurs temps.
+     */
+    private void injecter(final WebView vue) {
+        try { vue.evaluateJavascript(GREFFON, null); } catch (Throwable ignored) { }
+    }
+
+    private void injecterPlusTard(final WebView vue, long delai) {
+        differe.postDelayed(new Runnable() {
+            @Override public void run() { injecter(vue); }
+        }, delai);
+    }
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -158,7 +180,7 @@ public class MainActivity extends Activity {
         s.setMediaPlaybackRequiresUserGesture(false);
 
         // Permet au site de se reconnaitre dans l'APK (navInfo/notifMessage)
-        s.setUserAgentString(s.getUserAgentString() + " SonoraAPK/1.4");
+        s.setUserAgentString(s.getUserAgentString() + " SonoraAPK/1.5");
 
         CookieManager.getInstance().setAcceptCookie(true);
         CookieManager.getInstance().setAcceptThirdPartyCookies(webView, true);
@@ -169,14 +191,17 @@ public class MainActivity extends Activity {
             @Override
             public void onPageStarted(WebView view, String url, android.graphics.Bitmap f) {
                 super.onPageStarted(view, url, f);
-                view.evaluateJavascript(GREFFON, null);
+                injecter(view);
             }
 
             @Override
             public void onPageFinished(WebView view, String url) {
                 super.onPageFinished(view, url);
-                // Filet : si onPageStarted etait trop tot, on recommence.
-                view.evaluateJavascript(GREFFON, null);
+                injecter(view);
+                // Le lecteur s'installe apres le chargement : deux rappels
+                // suffisent a rattraper les demarrages lents.
+                injecterPlusTard(view, 1500);
+                injecterPlusTard(view, 5000);
             }
         });
 
@@ -203,6 +228,7 @@ public class MainActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        if (webView != null) { injecter(webView); }
     }
 
     @Override
@@ -220,6 +246,7 @@ public class MainActivity extends Activity {
 
     @Override
     protected void onDestroy() {
+        differe.removeCallbacksAndMessages(null);
         stopService(new Intent(this, KeepAliveService.class));
         if (webView != null) {
             root.removeView(webView);

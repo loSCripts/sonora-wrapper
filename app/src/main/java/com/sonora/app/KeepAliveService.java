@@ -50,6 +50,7 @@ public class KeepAliveService extends Service {
     private long positionMs = 0;
     private final Set<String> actions = new HashSet<String>();
     private String dernierChemin = null;
+    private String source = null;
 
     /** Remonte quel chemin a effectivement pilote le lecteur (diagnostic). */
     public static void pousserChemin(String c) {
@@ -57,6 +58,17 @@ public class KeepAliveService extends Service {
         if (s == null) { return; }
         s.dernierChemin = c;
         s.rafraichir();
+    }
+
+    /** D'ou viennent l'etat et la position cote page (diagnostic). */
+    public static void pousserSource(String src) {
+        final KeepAliveService s = instance;
+        if (s == null) { return; }
+        s.pontOk = true;
+        if (src != null && !src.equals(s.source)) {
+            s.source = src;
+            s.rafraichir();
+        }
     }
 
     public static void pousserPont() {
@@ -69,14 +81,22 @@ public class KeepAliveService extends Service {
         final KeepAliveService s = instance;
         if (s == null) { return; }
         s.pontOk = true;
-        if (t != null && t.length() > 0) { s.titre = t; s.aDesMeta = true; }
-        s.artiste = a == null ? "" : a;
-        s.album = al == null ? "" : al;
+
+        String nt = (t != null && t.length() > 0) ? t : s.titre;
+        String na = a == null ? "" : a;
+        String nal = al == null ? "" : al;
+        boolean change = !nt.equals(s.titre) || !na.equals(s.artiste) || !nal.equals(s.album);
+
+        s.titre = nt;
+        s.artiste = na;
+        s.album = nal;
+        if (t != null && t.length() > 0) { s.aDesMeta = true; }
+
         if (url != null && url.length() > 0 && !url.equals(s.pochetteUrl)) {
             s.pochetteUrl = url;
             s.chargerPochette(url);
         }
-        s.rafraichir();
+        if (change) { s.rafraichir(); }
     }
 
     public static void pousserEtat(boolean lecture) {
@@ -86,11 +106,25 @@ public class KeepAliveService extends Service {
         if (s.enLecture != lecture) { s.enLecture = lecture; s.rafraichir(); }
     }
 
+    /**
+     * Appele environ une fois par seconde. On ne reconstruit PAS la
+     * notification : la barre de progression du volet media est lue sur la
+     * MediaSession, il suffit donc de republier l'etat de lecture. C'est
+     * environ cent fois moins couteux qu'un notify() complet.
+     */
     public static void pousserPosition(long duree, long position) {
         final KeepAliveService s = instance;
         if (s == null) { return; }
+        s.pontOk = true;
+        if (duree == s.dureeMs && position == s.positionMs) { return; }
+        boolean dureeChange = (duree > 0) != (s.dureeMs > 0);
         s.dureeMs = duree;
         s.positionMs = position;
+        if (dureeChange) {
+            s.rafraichir();          // apparition / disparition de la barre
+        } else {
+            s.majSessionSeule();     // simple avance de l'aiguille
+        }
     }
 
     public static void pousserActions(String csv) {
@@ -134,11 +168,14 @@ public class KeepAliveService extends Service {
             @Override public void onFastForward()   { MainActivity.appelerJs("seekforward", 10); }
             @Override public void onRewind()        { MainActivity.appelerJs("seekbackward", 10); }
             @Override public void onStop()          { MainActivity.appelerJs("pause", 0); }
+            /** Glissement du doigt sur la barre de la notification. */
+            @Override public void onSeekTo(long pos) {
+                MainActivity.appelerJs("seekto", (int) (pos / 1000));
+            }
         });
 
-        // CORRECTIF v1.3 : la session doit avoir des metadonnees ET un etat
-        // AVANT d'etre rattachee a la notification. Une session vide fait
-        // disparaitre la notification des deux cotes (liste + zone media).
+        // La session doit avoir des metadonnees ET un etat AVANT d'etre
+        // rattachee a la notification, sinon SystemUI ne l'affiche nulle part.
         majSession();
         session.setActive(true);
 
@@ -178,6 +215,15 @@ public class KeepAliveService extends Service {
     @Override
     public IBinder onBind(Intent intent) { return null; }
 
+    /** Republie l'etat de lecture seul (pas de notification reconstruite). */
+    private void majSessionSeule() {
+        ui.post(new Runnable() {
+            @Override public void run() {
+                try { majEtat(); } catch (Throwable ignored) { }
+            }
+        });
+    }
+
     private void rafraichir() {
         ui.post(new Runnable() {
             @Override public void run() {
@@ -199,13 +245,21 @@ public class KeepAliveService extends Service {
                     .putString(MediaMetadata.METADATA_KEY_ARTIST,
                             artiste.length() > 0 ? artiste : "Sonora")
                     .putString(MediaMetadata.METADATA_KEY_ALBUM, album)
+                    // -1 = duree inconnue : Android masque la barre au lieu
+                    // d'en afficher une bloquee sur 0:00.
                     .putLong(MediaMetadata.METADATA_KEY_DURATION,
-                            dureeMs > 0 ? dureeMs : 1);
+                            dureeMs > 0 ? dureeMs : -1L);
             if (pochette != null) {
                 m.putBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART, pochette);
             }
             session.setMetadata(m.build());
+        } catch (Throwable ignored) { }
+        majEtat();
+    }
 
+    private void majEtat() {
+        if (session == null) { return; }
+        try {
             long dispo = PlaybackState.ACTION_PLAY_PAUSE
                     | PlaybackState.ACTION_PLAY
                     | PlaybackState.ACTION_PAUSE
@@ -215,6 +269,8 @@ public class KeepAliveService extends Service {
                     | PlaybackState.ACTION_REWIND
                     | PlaybackState.ACTION_SEEK_TO;
 
+            // La vitesse 1.0 en lecture permet a Android d'extrapoler la
+            // position entre deux envois : l'aiguille avance en continu.
             session.setPlaybackState(new PlaybackState.Builder()
                     .setActions(dispo)
                     .setState(enLecture ? PlaybackState.STATE_PLAYING
@@ -248,6 +304,14 @@ public class KeepAliveService extends Service {
                       : "En attente du lecteur...";
     }
 
+    /** Petit texte de diagnostic : "source des donnees - dernier bouton". */
+    private String diagnostic() {
+        if (source == null && dernierChemin == null) { return null; }
+        if (dernierChemin == null) { return source; }
+        if (source == null) { return dernierChemin; }
+        return source + " - " + dernierChemin;
+    }
+
     private Notification.Builder base() {
         Notification.Builder b;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -255,7 +319,8 @@ public class KeepAliveService extends Service {
         } else {
             b = new Notification.Builder(this);
         }
-        if (dernierChemin != null) { b.setSubText(dernierChemin); }
+        String d = diagnostic();
+        if (d != null) { b.setSubText(d); }
         b.setSmallIcon(android.R.drawable.ic_media_play)
          .setContentIntent(ouvrirApp())
          .setOngoing(true)
@@ -272,7 +337,7 @@ public class KeepAliveService extends Service {
         if (pochette != null) { b.setLargeIcon(pochette); }
 
         // Les 3 boutons de base sont TOUJOURS presents : si la page n'a pas
-        // declare le gestionnaire, l'appel JS est simplement sans effet.
+        // declare le gestionnaire, l'appel JS passe par les primitives du site.
         b.addAction(action(android.R.drawable.ic_media_previous, "Precedent", ACT_PREV, 1));
         int idxPlay = 1;
         b.addAction(action(
@@ -280,15 +345,12 @@ public class KeepAliveService extends Service {
                           : android.R.drawable.ic_media_play,
                 enLecture ? "Pause" : "Lecture", ACT_PLAYPAUSE, 3));
         b.addAction(action(android.R.drawable.ic_media_next, "Suivant", ACT_NEXT, 5));
-        int nb = 3;
 
         if (actions.contains("seekbackward")) {
             b.addAction(action(android.R.drawable.ic_media_rew, "-10 s", ACT_BACK, 2));
-            nb++;
         }
         if (actions.contains("seekforward")) {
             b.addAction(action(android.R.drawable.ic_media_ff, "+10 s", ACT_FWD, 4));
-            nb++;
         }
 
         Notification.MediaStyle style = new Notification.MediaStyle();

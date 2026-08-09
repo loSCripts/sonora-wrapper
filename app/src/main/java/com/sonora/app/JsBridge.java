@@ -20,12 +20,18 @@ public class JsBridge {
     }
 
     @JavascriptInterface
-    public void onPosition(long dureeMs, long positionMs) {
-        KeepAliveService.pousserPosition(dureeMs, positionMs);
+    public void onPosition(double dureeMs, double positionMs) {
+        KeepAliveService.pousserPosition((long) dureeMs, (long) positionMs);
     }
 
     @JavascriptInterface
     public void onActions(String listeCsv) {
         KeepAliveService.pousserActions(listeCsv);
+    }
+
+    /** Diagnostic : d'ou viennent l'etat et la position (ex. "yt/site"). */
+    @JavascriptInterface
+    public void onSource(String source) {
+        KeepAliveService.pousserSource(source);
     }
 }
