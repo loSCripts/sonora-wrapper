@@ -15,7 +15,9 @@ import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
+import android.util.Base64;
 
+import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
@@ -26,6 +28,17 @@ public class KeepAliveService extends Service {
 
     private static final String CANAL = "sonora_playback";
     private static final int NOTIF_ID = 1;
+
+    /**
+     * Cote de la pochette envoyee au systeme. Une MediaSession voyage par
+     * Binder : au-dela du megaoctet la transaction est refusee et la
+     * notification perd d'un coup titre, artiste ET image. 512 en RGB_565
+     * fait 512 Ko, large marge, et reste net sur un ecran verrouille.
+     */
+    private static final int POCHETTE_MAX = 512;
+
+    /** Au-dela, on ne telecharge meme pas : ce n'est pas une pochette. */
+    private static final int POIDS_MAX = 6 * 1024 * 1024;
 
     public static final String ACT_PLAYPAUSE = "com.sonora.app.PLAYPAUSE";
     public static final String ACT_NEXT      = "com.sonora.app.NEXT";
@@ -41,8 +54,10 @@ public class KeepAliveService extends Service {
     private String titre = "Sonora";
     private String artiste = "";
     private String album = "";
+    private String moteur = "";
     private String pochetteUrl = "";
     private Bitmap pochette;
+    private String pochetteErreur;
     private boolean enLecture = false;
     private boolean pontOk = false;
     private boolean aDesMeta = false;
@@ -71,6 +86,14 @@ public class KeepAliveService extends Service {
         }
     }
 
+    /** Moteur de lecture du site : sert a nommer la plateforme. */
+    public static void pousserMoteur(String m) {
+        final KeepAliveService s = instance;
+        if (s == null) { return; }
+        String n = m == null ? "" : m;
+        if (!n.equals(s.moteur)) { s.moteur = n; s.rafraichir(); }
+    }
+
     public static void pousserPont() {
         final KeepAliveService s = instance;
         if (s == null) { return; }
@@ -94,6 +117,7 @@ public class KeepAliveService extends Service {
 
         if (url != null && url.length() > 0 && !url.equals(s.pochetteUrl)) {
             s.pochetteUrl = url;
+            s.pochetteErreur = null;
             s.chargerPochette(url);
         }
         if (change) { s.rafraichir(); }
@@ -109,8 +133,7 @@ public class KeepAliveService extends Service {
     /**
      * Appele environ une fois par seconde. On ne reconstruit PAS la
      * notification : la barre de progression du volet media est lue sur la
-     * MediaSession, il suffit donc de republier l'etat de lecture. C'est
-     * environ cent fois moins couteux qu'un notify() complet.
+     * MediaSession, il suffit donc de republier l'etat de lecture.
      */
     public static void pousserPosition(long duree, long position) {
         final KeepAliveService s = instance;
@@ -168,8 +191,16 @@ public class KeepAliveService extends Service {
             @Override public void onFastForward()   { MainActivity.appelerJs("seekforward", 10); }
             @Override public void onRewind()        { MainActivity.appelerJs("seekbackward", 10); }
             @Override public void onStop()          { MainActivity.appelerJs("pause", 0); }
-            /** Glissement du doigt sur la barre de la notification. */
+            /**
+             * Glissement du doigt sur la barre. On deplace l'aiguille tout de
+             * suite pour que le geste reponde a l'instant, puis on demande le
+             * saut au lecteur : le battement d'une seconde confirmera.
+             */
             @Override public void onSeekTo(long pos) {
+                if (pos >= 0 && (dureeMs <= 0 || pos <= dureeMs)) {
+                    positionMs = pos;
+                    majEtat();
+                }
                 MainActivity.appelerJs("seekto", (int) (pos / 1000));
             }
         });
@@ -240,17 +271,35 @@ public class KeepAliveService extends Service {
     private void majSession() {
         if (session == null) { return; }
         try {
+            String artistePlein = artiste.length() > 0 ? artiste : "Sonora";
+
             MediaMetadata.Builder m = new MediaMetadata.Builder()
                     .putString(MediaMetadata.METADATA_KEY_TITLE, titre)
-                    .putString(MediaMetadata.METADATA_KEY_ARTIST,
-                            artiste.length() > 0 ? artiste : "Sonora")
+                    .putString(MediaMetadata.METADATA_KEY_ARTIST, artistePlein)
                     .putString(MediaMetadata.METADATA_KEY_ALBUM, album)
+                    .putString(MediaMetadata.METADATA_KEY_ALBUM_ARTIST, artistePlein)
+                    // Certaines surfaces (ecran verrouille, Android Auto,
+                    // surcouches constructeur) lisent les champs DISPLAY_*
+                    // plutot que TITLE/ARTIST : on remplit les deux jeux.
+                    .putString(MediaMetadata.METADATA_KEY_DISPLAY_TITLE, titre)
+                    .putString(MediaMetadata.METADATA_KEY_DISPLAY_SUBTITLE, artistePlein)
                     // -1 = duree inconnue : Android masque la barre au lieu
                     // d'en afficher une bloquee sur 0:00.
                     .putLong(MediaMetadata.METADATA_KEY_DURATION,
                             dureeMs > 0 ? dureeMs : -1L);
+
+            String info = infoSecondaire();
+            if (info != null) {
+                m.putString(MediaMetadata.METADATA_KEY_DISPLAY_DESCRIPTION, info);
+            }
+            if (pochetteUrl != null && pochetteUrl.startsWith("http")) {
+                m.putString(MediaMetadata.METADATA_KEY_ALBUM_ART_URI, pochetteUrl);
+                m.putString(MediaMetadata.METADATA_KEY_ART_URI, pochetteUrl);
+            }
             if (pochette != null) {
                 m.putBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART, pochette);
+                m.putBitmap(MediaMetadata.METADATA_KEY_ART, pochette);
+                m.putBitmap(MediaMetadata.METADATA_KEY_DISPLAY_ICON, pochette);
             }
             session.setMetadata(m.build());
         } catch (Throwable ignored) { }
@@ -270,7 +319,8 @@ public class KeepAliveService extends Service {
                     | PlaybackState.ACTION_SEEK_TO;
 
             // La vitesse 1.0 en lecture permet a Android d'extrapoler la
-            // position entre deux envois : l'aiguille avance en continu.
+            // position entre deux envois : l'aiguille avance en continu et
+            // les deux compteurs aux extremites de la barre suivent.
             session.setPlaybackState(new PlaybackState.Builder()
                     .setActions(dispo)
                     .setState(enLecture ? PlaybackState.STATE_PLAYING
@@ -296,20 +346,49 @@ public class KeepAliveService extends Service {
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
     }
 
-    private String sousTitre() {
-        if (aDesMeta) {
-            return artiste.length() > 0 ? artiste : "Sonora";
-        }
-        return pontOk ? "Pont connecte - en attente d'une lecture"
-                      : "En attente du lecteur...";
+    private String plateforme() {
+        if ("yt".equals(moteur)) { return "YouTube"; }
+        if ("sc".equals(moteur)) { return "SoundCloud"; }
+        return null;
     }
 
-    /** Petit texte de diagnostic : "source des donnees - dernier bouton". */
-    private String diagnostic() {
-        if (source == null && dernierChemin == null) { return null; }
-        if (dernierChemin == null) { return source; }
-        if (source == null) { return dernierChemin; }
-        return source + " - " + dernierChemin;
+    /** L'album quand il apprend quelque chose, sinon la plateforme. */
+    private String infoSecondaire() {
+        if (album != null && album.length() > 0
+                && !album.equalsIgnoreCase("Sonora")
+                && !album.equalsIgnoreCase(titre)
+                && !album.equalsIgnoreCase(artiste)) {
+            return album;
+        }
+        return plateforme();
+    }
+
+    /** Ligne artiste, enrichie de l'album ou de la plateforme si utile. */
+    private String ligneArtiste() {
+        if (!aDesMeta) {
+            return pontOk ? "Pont connecte - en attente d'une lecture"
+                          : "En attente du lecteur...";
+        }
+        String a = artiste.length() > 0 ? artiste : "Sonora";
+        String info = infoSecondaire();
+        if (info != null && !info.equalsIgnoreCase(a)) {
+            return a + " \u2022 " + info;
+        }
+        return a;
+    }
+
+    /**
+     * Le petit texte du haut ne sert plus de journal de bord : il ne montre
+     * quelque chose que lorsqu'un etage a lache, pour ne pas manger la place
+     * d'une information utile quand tout va bien.
+     */
+    private String panne() {
+        if (source != null && source.startsWith("?")) { return "source " + source; }
+        if (pochetteErreur != null) { return "pochette " + pochetteErreur; }
+        if ("rien".equals(dernierChemin) || "pas de vue".equals(dernierChemin)) {
+            return "bouton sans effet";
+        }
+        return null;
     }
 
     private Notification.Builder base() {
@@ -319,8 +398,8 @@ public class KeepAliveService extends Service {
         } else {
             b = new Notification.Builder(this);
         }
-        String d = diagnostic();
-        if (d != null) { b.setSubText(d); }
+        String p = panne();
+        if (p != null) { b.setSubText(p); }
         b.setSmallIcon(android.R.drawable.ic_media_play)
          .setContentIntent(ouvrirApp())
          .setOngoing(true)
@@ -332,7 +411,7 @@ public class KeepAliveService extends Service {
     private Notification construireMedia() {
         Notification.Builder b = base()
                 .setContentTitle(titre)
-                .setContentText(sousTitre());
+                .setContentText(ligneArtiste());
 
         if (pochette != null) { b.setLargeIcon(pochette); }
 
@@ -366,7 +445,7 @@ public class KeepAliveService extends Service {
         Notification.Builder b = base()
                 .setContentTitle(titre)
                 .setContentText(cause == null
-                        ? sousTitre()
+                        ? ligneArtiste()
                         : "Mode simplifie (" + cause + ")");
         b.addAction(action(android.R.drawable.ic_media_previous, "Precedent", ACT_PREV, 1));
         b.addAction(action(
@@ -387,27 +466,112 @@ public class KeepAliveService extends Service {
                 texte, pi).build();
     }
 
+    // -----------------------------------------------------------------
+    //  Pochette
+    // -----------------------------------------------------------------
+
     private void chargerPochette(final String url) {
         new Thread(new Runnable() {
             @Override public void run() {
+                String erreur = null;
                 Bitmap bmp = null;
-                HttpURLConnection co = null;
                 try {
-                    co = (HttpURLConnection) new URL(url).openConnection();
-                    co.setConnectTimeout(8000);
-                    co.setReadTimeout(8000);
-                    co.setInstanceFollowRedirects(true);
-                    InputStream in = co.getInputStream();
-                    BitmapFactory.Options o = new BitmapFactory.Options();
-                    o.inPreferredConfig = Bitmap.Config.RGB_565;
-                    bmp = BitmapFactory.decodeStream(in, null, o);
-                    in.close();
-                } catch (Throwable ignored) {
-                } finally {
-                    if (co != null) { co.disconnect(); }
+                    byte[] octets = url.startsWith("data:")
+                            ? decoderDataUrl(url)
+                            : telecharger(url);
+                    if (octets == null || octets.length == 0) {
+                        erreur = "vide";
+                    } else {
+                        bmp = decoderEtReduire(octets);
+                        if (bmp == null) { erreur = "illisible"; }
+                    }
+                } catch (Throwable t) {
+                    erreur = etiquette(t);
                 }
-                if (bmp != null) { pochette = bmp; rafraichir(); }
+                if (!url.equals(pochetteUrl)) { return; }   // piste deja changee
+                if (bmp != null) {
+                    pochette = bmp;
+                    pochetteErreur = null;
+                } else {
+                    pochetteErreur = erreur;
+                }
+                rafraichir();
             }
         }).start();
+    }
+
+    private static String etiquette(Throwable t) {
+        String m = t.getMessage();
+        if (m != null && m.length() > 0 && m.length() < 40) { return m; }
+        return t.getClass().getSimpleName();
+    }
+
+    /** Certains hebergeurs refusent une requete sans navigateur declare. */
+    private byte[] telecharger(String url) throws Exception {
+        HttpURLConnection co = null;
+        try {
+            co = (HttpURLConnection) new URL(url).openConnection();
+            co.setConnectTimeout(8000);
+            co.setReadTimeout(8000);
+            co.setInstanceFollowRedirects(true);
+            co.setRequestProperty("User-Agent", "Mozilla/5.0 (Android) SonoraAPK");
+            co.setRequestProperty("Accept", "image/*,*/*");
+            int code = co.getResponseCode();
+            if (code >= 400) { throw new Exception(String.valueOf(code)); }
+            InputStream in = co.getInputStream();
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            byte[] tampon = new byte[16384];
+            int lu, total = 0;
+            while ((lu = in.read(tampon)) > 0) {
+                total += lu;
+                if (total > POIDS_MAX) { in.close(); throw new Exception("trop lourde"); }
+                out.write(tampon, 0, lu);
+            }
+            in.close();
+            return out.toByteArray();
+        } finally {
+            if (co != null) { co.disconnect(); }
+        }
+    }
+
+    private static byte[] decoderDataUrl(String url) {
+        int v = url.indexOf(',');
+        if (v < 0) { return null; }
+        String charge = url.substring(v + 1);
+        if (url.substring(0, v).contains("base64")) {
+            return Base64.decode(charge, Base64.DEFAULT);
+        }
+        return charge.getBytes();
+    }
+
+    /**
+     * Deux passes : la premiere ne lit que les dimensions, la seconde decode
+     * deja reduit. On ne charge donc jamais une image de 1280x720 en memoire
+     * pour la retrecir ensuite.
+     */
+    private static Bitmap decoderEtReduire(byte[] octets) {
+        BitmapFactory.Options mesure = new BitmapFactory.Options();
+        mesure.inJustDecodeBounds = true;
+        BitmapFactory.decodeByteArray(octets, 0, octets.length, mesure);
+
+        int cote = Math.max(mesure.outWidth, mesure.outHeight);
+        int pas = 1;
+        while (cote > 0 && cote / pas > POCHETTE_MAX * 2) { pas *= 2; }
+
+        BitmapFactory.Options lecture = new BitmapFactory.Options();
+        lecture.inSampleSize = pas;
+        lecture.inPreferredConfig = Bitmap.Config.RGB_565;
+        Bitmap brut = BitmapFactory.decodeByteArray(octets, 0, octets.length, lecture);
+        if (brut == null) { return null; }
+
+        int grand = Math.max(brut.getWidth(), brut.getHeight());
+        if (grand <= POCHETTE_MAX) { return brut; }
+
+        float k = (float) POCHETTE_MAX / (float) grand;
+        int l = Math.max(1, Math.round(brut.getWidth() * k));
+        int h = Math.max(1, Math.round(brut.getHeight() * k));
+        Bitmap reduit = Bitmap.createScaledBitmap(brut, l, h, true);
+        if (reduit != brut) { brut.recycle(); }
+        return reduit;
     }
 }

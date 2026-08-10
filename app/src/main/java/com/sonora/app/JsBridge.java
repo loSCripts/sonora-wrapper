@@ -29,6 +29,12 @@ public class JsBridge {
         KeepAliveService.pousserActions(listeCsv);
     }
 
+    /** Moteur de lecture en cours cote site : "yt", "sc" ou "audio". */
+    @JavascriptInterface
+    public void onMoteur(String moteur) {
+        KeepAliveService.pousserMoteur(moteur);
+    }
+
     /** Diagnostic : d'ou viennent l'etat et la position (ex. "yt/site"). */
     @JavascriptInterface
     public void onSource(String source) {

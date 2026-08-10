@@ -37,9 +37,9 @@ public class MainActivity extends Activity {
      *                         sinon l'etiquette du bouton #playBtn
      *
      * mediaSession ne sert plus que de repli. Le greffon publie aussi la
-     * source reellement utilisee (ex. "yt/site"), affichee en petit dans la
-     * notification : si quelque chose ne remonte pas, on voit lequel des
-     * etages a lache sans avoir a brancher un cable.
+     * source reellement utilisee (ex. "yt/site") et le moteur en cours
+     * ("yt" / "sc" / "audio"), qui sert a nommer la plateforme dans la
+     * notification et a signaler un etage en panne.
      */
     private static final String GREFFON =
         "(function(){var N=window.SonoraNative;if(!N)return;if(window.__snb)return;window.__snb=1;var"
@@ -60,15 +60,16 @@ public class MainActivity extends Activity {
           + "ch(e){}if(isFinite(d)&&d>0){srcP=\"site\";return [d,isFinite(p)?p:0]}if(pd>0){srcP=\"ms\";return"
           + " [pd,pp]}try{var a=elAudio();if(a&&isFinite(a.duration)&&a.duration>0){srcP=\"audio\";return ["
           + "a.duration,a.currentTime||0]}}catch(e){}srcP=\"?\";return [0,0];}var mMeta=\"\",mEtat=null,mAct="
-          + "\"\",mSrc=\"\",n=0;function battement(){n++;if(n%10===0){mMeta=\"\";mEtat=null;mAct=\"\";mSrc=\"\"}try"
-          + "{var v=ms?ms.metadata:null,u=\"\";var t=v&&v.title?v.title:\"\";var ar=v&&v.artist?v.artist:\"\";v"
-          + "ar al=v&&v.album?v.album:\"\";if(v&&v.artwork&&v.artwork.length)u=v.artwork[v.artwork.length-1"
-          + "].src||\"\";var sig=t+\"|\"+ar+\"|\"+al+\"|\"+u;if(sig!==mMeta){mMeta=sig;N.onMeta(t,ar,al,u)}}catch"
-          + "(e){}var e2=etat();var tp=temps();try{N.onPosition(Math.round(tp[0]*1000),Math.round(tp[1]*1"
-          + "000))}catch(e){}if(e2!==mEtat){mEtat=e2;try{N.onState(e2)}catch(e){}}try{var la=Object.keys("
-          + "H).join(\",\");if(la!==mAct){mAct=la;N.onActions(la)}}catch(e){}var s=srcE+\"/\"+srcP;if(s!==mSr"
-          + "c){mSrc=s;try{N.onSource(s)}catch(e){}}}try{N.onPont()}catch(e){}battement();setInterval(bat"
-          + "tement,1000);})();";
+          + "\"\",mSrc=\"\",mMo=\"\",n=0;function battement(){n++;if(n%10===0){mMeta=\"\";mEtat=null;mAct=\"\";mSrc"
+          + "=\"\";mMo=\"\"}try{var v=ms?ms.metadata:null,u=\"\";var t=v&&v.title?v.title:\"\";var ar=v&&v.artist"
+          + "?v.artist:\"\";var al=v&&v.album?v.album:\"\";if(v&&v.artwork&&v.artwork.length)u=v.artwork[v.ar"
+          + "twork.length-1].src||\"\";var sig=t+\"|\"+ar+\"|\"+al+\"|\"+u;if(sig!==mMeta){mMeta=sig;N.onMeta(t,a"
+          + "r,al,u)}}catch(e){}var e2=etat();var tp=temps();try{N.onPosition(Math.round(tp[0]*1000),Math"
+          + ".round(tp[1]*1000))}catch(e){}if(e2!==mEtat){mEtat=e2;try{N.onState(e2)}catch(e){}}try{var l"
+          + "a=Object.keys(H).join(\",\");if(la!==mAct){mAct=la;N.onActions(la)}}catch(e){}try{var mo=\"\";if"
+          + "(typeof engine!==\"undefined\"&&engine)mo=\"\"+engine;if(mo!==mMo){mMo=mo;N.onMoteur(mo)}}catch("
+          + "e){}var s=srcE+\"/\"+srcP;if(s!==mSrc){mSrc=s;try{N.onSource(s)}catch(e){}}}try{N.onPont()}cat"
+          + "ch(e){}battement();setInterval(battement,1000);})();";
 
 
     /**
@@ -180,7 +181,7 @@ public class MainActivity extends Activity {
         s.setMediaPlaybackRequiresUserGesture(false);
 
         // Permet au site de se reconnaitre dans l'APK (navInfo/notifMessage)
-        s.setUserAgentString(s.getUserAgentString() + " SonoraAPK/1.5");
+        s.setUserAgentString(s.getUserAgentString() + " SonoraAPK/1.6");
 
         CookieManager.getInstance().setAcceptCookie(true);
         CookieManager.getInstance().setAcceptThirdPartyCookies(webView, true);
