@@ -30,6 +30,8 @@ public class MainActivity extends Activity {
      * CHANGEMENT v1.5 : l'etat de lecture et la position ne sont PLUS lus dans
      * navigator.mediaSession. Ils sont pris directement a la source du site :
      *
+     *   titre / pochette  ->  cur(), la piste courante du site ; a defaut
+     *                         l'objet passe a session(), capture au vol
      *   position / duree  ->  len() et pos(), exactement ce qui alimente la
      *                         barre de progression affichee dans l'app
      *   lecture / pause   ->  YTP.getPlayerState() pour YouTube,
@@ -37,9 +39,9 @@ public class MainActivity extends Activity {
      *                         sinon l'etiquette du bouton #playBtn
      *
      * mediaSession ne sert plus que de repli. Le greffon publie aussi la
-     * source reellement utilisee (ex. "yt/site") et le moteur en cours
-     * ("yt" / "sc" / "audio"), qui sert a nommer la plateforme dans la
-     * notification et a signaler un etage en panne.
+     * source reellement utilisee (ex. "yt/site"), affichee en petit dans la
+     * notification : si quelque chose ne remonte pas, on voit lequel des
+     * etages a lache sans avoir a brancher un cable.
      */
     private static final String GREFFON =
         "(function(){var N=window.SonoraNative;if(!N)return;if(window.__snb)return;window.__snb=1;var"
@@ -49,27 +51,34 @@ public class MainActivity extends Activity {
           + "fset:d,seekTime:d})}catch(e){}return true};window.__snbHas=function(a){return !!H[a]};var pd"
           + "=0,pp=0;if(ms&&ms.setPositionState){var sp=ms.setPositionState.bind(ms);ms.setPositionState="
           + "function(s){try{sp(s)}catch(e){}try{if(s){pd=s.duration||0;pp=s.position||0}}catch(e){}};}va"
-          + "r srcE=\"?\",srcP=\"?\";function elAudio(){try{return document.getElementById(\"audio\")}catch(e){"
-          + "return null}}function etat(){try{if(typeof engine!==\"undefined\"){if(engine===\"yt\"&&typeof YT"
-          + "P!==\"undefined\"&&YTP&&YTP.getPlayerState){srcE=\"yt\";return YTP.getPlayerState()===1}if(engin"
-          + "e===\"audio\"){var a=elAudio();if(a){srcE=\"audio\";return !a.paused}}}}catch(e){}try{var b=docu"
-          + "ment.getElementById(\"playBtn\");if(b){var l=(b.getAttribute(\"aria-label\")||\"\").toLowerCase();"
-          + "if(l){srcE=\"dom\";return l.indexOf(\"pause\")===0}}}catch(e){}try{if(ms){srcE=\"ms\";return ms.pl"
-          + "aybackState===\"playing\"}}catch(e){}srcE=\"?\";return false;}function temps(){var d=0,p=0;try{i"
-          + "f(typeof len===\"function\")d=len()||0}catch(e){}try{if(typeof pos===\"function\")p=pos()||0}cat"
-          + "ch(e){}if(isFinite(d)&&d>0){srcP=\"site\";return [d,isFinite(p)?p:0]}if(pd>0){srcP=\"ms\";return"
-          + " [pd,pp]}try{var a=elAudio();if(a&&isFinite(a.duration)&&a.duration>0){srcP=\"audio\";return ["
-          + "a.duration,a.currentTime||0]}}catch(e){}srcP=\"?\";return [0,0];}var mMeta=\"\",mEtat=null,mAct="
-          + "\"\",mSrc=\"\",mMo=\"\",n=0;function battement(){n++;if(n%10===0){mMeta=\"\";mEtat=null;mAct=\"\";mSrc"
-          + "=\"\";mMo=\"\"}try{var v=ms?ms.metadata:null,u=\"\";var t=v&&v.title?v.title:\"\";var ar=v&&v.artist"
-          + "?v.artist:\"\";var al=v&&v.album?v.album:\"\";if(v&&v.artwork&&v.artwork.length)u=v.artwork[v.ar"
-          + "twork.length-1].src||\"\";var sig=t+\"|\"+ar+\"|\"+al+\"|\"+u;if(sig!==mMeta){mMeta=sig;N.onMeta(t,a"
-          + "r,al,u)}}catch(e){}var e2=etat();var tp=temps();try{N.onPosition(Math.round(tp[0]*1000),Math"
-          + ".round(tp[1]*1000))}catch(e){}if(e2!==mEtat){mEtat=e2;try{N.onState(e2)}catch(e){}}try{var l"
-          + "a=Object.keys(H).join(\",\");if(la!==mAct){mAct=la;N.onActions(la)}}catch(e){}try{var mo=\"\";if"
-          + "(typeof engine!==\"undefined\"&&engine)mo=\"\"+engine;if(mo!==mMo){mMo=mo;N.onMoteur(mo)}}catch("
-          + "e){}var s=srcE+\"/\"+srcP;if(s!==mSrc){mSrc=s;try{N.onSource(s)}catch(e){}}}try{N.onPont()}cat"
-          + "ch(e){}battement();setInterval(battement,1000);})();";
+          + "r T=null;try{if(typeof window.session===\"function\"){var oses=window.session;window.session=f"
+          + "unction(t){try{if(t&&typeof t===\"object\")T=t}catch(e){}var r=oses.apply(this,arguments);try{"
+          + "battement()}catch(e){}return r};}}catch(e){}var srcE=\"?\",srcP=\"?\",srcM=\"?\";function elAudio("
+          + "){try{return document.getElementById(\"audio\")}catch(e){return null}}function piste(){var c=n"
+          + "ull;try{if(typeof cur===\"function\")c=cur()}catch(e){}if(c&&typeof c===\"object\"&&(c.title||c."
+          + "artist||c.art)){srcM=\"cur\";return c}if(T&&(T.title||T.artist||T.art)){srcM=\"session\";return "
+          + "T}return null;}function etat(){try{if(typeof engine!==\"undefined\"){if(engine===\"yt\"&&typeof "
+          + "YTP!==\"undefined\"&&YTP&&YTP.getPlayerState){srcE=\"yt\";return YTP.getPlayerState()===1}if(eng"
+          + "ine===\"audio\"){var a=elAudio();if(a){srcE=\"audio\";return !a.paused}}}}catch(e){}try{var b=do"
+          + "cument.getElementById(\"playBtn\");if(b){var l=(b.getAttribute(\"aria-label\")||\"\").toLowerCase("
+          + ");if(l){srcE=\"dom\";return l.indexOf(\"pause\")===0}}}catch(e){}try{if(ms){srcE=\"ms\";return ms."
+          + "playbackState===\"playing\"}}catch(e){}srcE=\"?\";return false;}function temps(){var d=0,p=0;try"
+          + "{if(typeof len===\"function\")d=len()||0}catch(e){}try{if(typeof pos===\"function\")p=pos()||0}c"
+          + "atch(e){}if(isFinite(d)&&d>0){srcP=\"site\";return [d,isFinite(p)?p:0]}if(pd>0){srcP=\"ms\";retu"
+          + "rn [pd,pp]}try{var a=elAudio();if(a&&isFinite(a.duration)&&a.duration>0){srcP=\"audio\";return"
+          + " [a.duration,a.currentTime||0]}}catch(e){}srcP=\"?\";return [0,0];}var mMeta=\"\",mEtat=null,mAc"
+          + "t=\"\",mSrc=\"\",mMo=\"\",n=0,avantP=-1;function battement(){n++;if(n%10===0){mMeta=\"\";mEtat=null;"
+          + "mAct=\"\";mSrc=\"\";mMo=\"\"}try{var t=\"\",ar=\"\",al=\"\",u=\"\";var pc=piste();if(pc){t=pc.title||\"\";ar"
+          + "=pc.artist||\"\";al=pc.album||\"\";u=pc.art||\"\"}else{var v=ms?ms.metadata:null;if(v){srcM=\"ms\";t"
+          + "=v.title||\"\";ar=v.artist||\"\";al=v.album||\"\";if(v.artwork&&v.artwork.length)u=v.artwork[v.art"
+          + "work.length-1].src||\"\"}else srcM=\"?\";}var sig=t+\"|\"+ar+\"|\"+al+\"|\"+u;if(sig!==mMeta){mMeta=si"
+          + "g;N.onMeta(t,ar,al,u)}}catch(e){}var e2=etat();var tp=temps();var av=tp[1]-avantP;if(!e2&&av"
+          + "antP>=0&&av>0.3&&av<3){e2=true;srcE=\"mvt\"}avantP=tp[1];try{N.onPosition(Math.round(tp[0]*100"
+          + "0),Math.round(tp[1]*1000))}catch(e){}if(e2!==mEtat){mEtat=e2;try{N.onState(e2)}catch(e){}}tr"
+          + "y{var la=Object.keys(H).join(\",\");if(la!==mAct){mAct=la;N.onActions(la)}}catch(e){}try{var m"
+          + "o=\"\";if(typeof engine!==\"undefined\"&&engine)mo=\"\"+engine;if(mo!==mMo){mMo=mo;N.onMoteur(mo)}"
+          + "}catch(e){}var s=srcE+\"/\"+srcP+\"/\"+srcM;if(s!==mSrc){mSrc=s;try{N.onSource(s)}catch(e){}}}tr"
+          + "y{N.onPont()}catch(e){}battement();setInterval(battement,1000);})();";
 
 
     /**
@@ -181,7 +190,7 @@ public class MainActivity extends Activity {
         s.setMediaPlaybackRequiresUserGesture(false);
 
         // Permet au site de se reconnaitre dans l'APK (navInfo/notifMessage)
-        s.setUserAgentString(s.getUserAgentString() + " SonoraAPK/1.6");
+        s.setUserAgentString(s.getUserAgentString() + " SonoraAPK/1.7");
 
         CookieManager.getInstance().setAcceptCookie(true);
         CookieManager.getInstance().setAcceptThirdPartyCookies(webView, true);

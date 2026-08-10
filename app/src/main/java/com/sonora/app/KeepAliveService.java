@@ -58,6 +58,7 @@ public class KeepAliveService extends Service {
     private String pochetteUrl = "";
     private Bitmap pochette;
     private String pochetteErreur;
+    private int couleur = 0;
     private boolean enLecture = false;
     private boolean pontOk = false;
     private boolean aDesMeta = false;
@@ -383,7 +384,9 @@ public class KeepAliveService extends Service {
      * d'une information utile quand tout va bien.
      */
     private String panne() {
-        if (source != null && source.startsWith("?")) { return "source " + source; }
+        if (source != null && source.contains("?") && dureeMs > 0) {
+            return "source " + source;
+        }
         if (pochetteErreur != null) { return "pochette " + pochetteErreur; }
         if ("rien".equals(dernierChemin) || "pas de vue".equals(dernierChemin)) {
             return "bouton sans effet";
@@ -400,6 +403,10 @@ public class KeepAliveService extends Service {
         }
         String p = panne();
         if (p != null) { b.setSubText(p); }
+        if (couleur != 0) {
+            b.setColor(couleur);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) { b.setColorized(true); }
+        }
         b.setSmallIcon(android.R.drawable.ic_media_play)
          .setContentIntent(ouvrirApp())
          .setOngoing(true)
@@ -491,8 +498,10 @@ public class KeepAliveService extends Service {
                 if (!url.equals(pochetteUrl)) { return; }   // piste deja changee
                 if (bmp != null) {
                     pochette = bmp;
+                    couleur = couleurDominante(bmp);
                     pochetteErreur = null;
                 } else {
+                    couleur = 0;
                     pochetteErreur = erreur;
                 }
                 rafraichir();
@@ -573,5 +582,62 @@ public class KeepAliveService extends Service {
         Bitmap reduit = Bitmap.createScaledBitmap(brut, l, h, true);
         if (reduit != brut) { brut.recycle(); }
         return reduit;
+    }
+
+    /**
+     * Teinte dominante de la pochette, pour colorer la notification. Pas de
+     * bibliotheque : on reduit l'image a 24x24, on range les pixels dans des
+     * cases grossieres, et on retient la case la plus peuplee en favorisant
+     * les couleurs franches. Une moyenne pure donnerait toujours du gris.
+     */
+    private static int couleurDominante(Bitmap source) {
+        try {
+            final int COTE = 24;
+            Bitmap p = Bitmap.createScaledBitmap(source, COTE, COTE, true);
+            int[] px = new int[COTE * COTE];
+            p.getPixels(px, 0, COTE, 0, 0, COTE, COTE);
+            if (p != source) { p.recycle(); }
+
+            int[] nb = new int[4096];
+            long[] sr = new long[4096];
+            long[] sg = new long[4096];
+            long[] sb = new long[4096];
+            long[] ss = new long[4096];
+
+            for (int i = 0; i < px.length; i++) {
+                int r = (px[i] >> 16) & 0xFF, g = (px[i] >> 8) & 0xFF, b = px[i] & 0xFF;
+                int haut = Math.max(r, Math.max(g, b));
+                int bas = Math.min(r, Math.min(g, b));
+                if (haut < 40) { continue; }              // presque noir
+                if (bas > 215) { continue; }              // presque blanc
+                int c = ((r >> 4) << 8) | ((g >> 4) << 4) | (b >> 4);
+                nb[c]++; sr[c] += r; sg[c] += g; sb[c] += b; ss[c] += (haut - bas);
+            }
+
+            int meilleur = -1;
+            double score = 0;
+            for (int c = 0; c < 4096; c++) {
+                if (nb[c] == 0) { continue; }
+                double sat = (double) ss[c] / (double) nb[c] / 255.0;
+                double s2 = nb[c] * (1.0 + 3.0 * sat);
+                if (s2 > score) { score = s2; meilleur = c; }
+            }
+            if (meilleur < 0) { return 0; }
+
+            int r = (int) (sr[meilleur] / nb[meilleur]);
+            int g = (int) (sg[meilleur] / nb[meilleur]);
+            int b = (int) (sb[meilleur] / nb[meilleur]);
+
+            // Le texte de la notification est clair : on assombrit ce qui
+            // serait trop lumineux pour rester lisible.
+            double lum = 0.299 * r + 0.587 * g + 0.114 * b;
+            if (lum > 140) {
+                double k = 140.0 / lum;
+                r = (int) (r * k); g = (int) (g * k); b = (int) (b * k);
+            }
+            return 0xFF000000 | (r << 16) | (g << 8) | b;
+        } catch (Throwable t) {
+            return 0;
+        }
     }
 }
