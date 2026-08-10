@@ -190,7 +190,7 @@ public class MainActivity extends Activity {
         s.setMediaPlaybackRequiresUserGesture(false);
 
         // Permet au site de se reconnaitre dans l'APK (navInfo/notifMessage)
-        s.setUserAgentString(s.getUserAgentString() + " SonoraAPK/1.7");
+        s.setUserAgentString(s.getUserAgentString() + " SonoraAPK/1.9");
 
         CookieManager.getInstance().setAcceptCookie(true);
         CookieManager.getInstance().setAcceptThirdPartyCookies(webView, true);

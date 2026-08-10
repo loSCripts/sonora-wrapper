@@ -407,7 +407,7 @@ public class KeepAliveService extends Service {
             b.setColor(couleur);
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) { b.setColorized(true); }
         }
-        b.setSmallIcon(android.R.drawable.ic_media_play)
+        b.setSmallIcon(R.drawable.ic_notif)
          .setContentIntent(ouvrirApp())
          .setOngoing(true)
          .setVisibility(Notification.VISIBILITY_PUBLIC)
