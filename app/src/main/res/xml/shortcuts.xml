@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="diagnostic"
+        android:enabled="true"
+        android:icon="@drawable/ic_notif"
+        android:shortcutShortLabel="@string/diag_court"
+        android:shortcutLongLabel="@string/diag_long">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="com.sonora.app"
+            android:targetClass="com.sonora.app.DiagnosticActivity" />
+    </shortcut>
+</shortcuts>

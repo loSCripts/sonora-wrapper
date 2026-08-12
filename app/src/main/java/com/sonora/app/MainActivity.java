@@ -2,10 +2,14 @@ package com.sonora.app;
 
 import android.app.Activity;
 import android.content.Intent;
+import android.content.res.Configuration;
+import android.graphics.Color;
+import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.Message;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowManager;
@@ -14,6 +18,7 @@ import android.webkit.WebChromeClient;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.ValueCallback;
+import android.webkit.WebResourceRequest;
 import android.webkit.WebViewClient;
 import android.widget.FrameLayout;
 
@@ -79,6 +84,32 @@ public class MainActivity extends Activity {
           + "o=\"\";if(typeof engine!==\"undefined\"&&engine)mo=\"\"+engine;if(mo!==mMo){mMo=mo;N.onMoteur(mo)}"
           + "}catch(e){}var s=srcE+\"/\"+srcP+\"/\"+srcM;if(s!==mSrc){mSrc=s;try{N.onSource(s)}catch(e){}}}tr"
           + "y{N.onPont()}catch(e){}battement();setInterval(battement,1000);})();";
+
+
+    /**
+     * Greffon de secours pour le mode clair/sombre.
+     *
+     * A partir de la v74, le site interroge lui-meme SonoraNative.modeSysteme()
+     * des la premiere ligne de son script : c'est le chemin propre, sans le
+     * moindre clignotement. Ce greffon-ci sert au cas ou l'APK tourne sur une
+     * version du site plus ancienne -- il rattrape apres coup en corrigeant ce
+     * que matchMedia raconte, puis en redemandant au site de se repeindre.
+     *
+     * On ne PEUT PAS se contenter de matchMedia : c'est justement ce que la
+     * WebView repond de travers. La valeur vient donc toujours du pont.
+     */
+    private static final String GREFFON_THEME =
+        "(function(){var N=window.SonoraNative;if(!N||!N.modeSysteme)return;"
+      + "var s='';try{s=N.modeSysteme()}catch(e){}if(s!=='light'&&s!=='dark')return;"
+      + "if(!window.__snTheme){window.__snTheme=1;var mm=window.matchMedia&&window.matchMedia.bind(window);"
+      + "if(mm){window.matchMedia=function(q){var r=mm(q);try{if(/prefers-color-scheme/i.test(q)){"
+      + "var v=/light/i.test(q)?(s==='light'):(/dark/i.test(q)?(s==='dark'):r.matches);"
+      + "Object.defineProperty(r,'matches',{get:function(){return v},configurable:true})}}catch(e){}"
+      + "return r}}}"
+      + "try{if(typeof window.appliquerTheme==='function'){window.appliquerTheme();return}}catch(e){}"
+      + "try{var p=null;try{p=JSON.parse(localStorage.getItem('sonora.theme'))}catch(e){}"
+      + "if(p!=='light'&&p!=='dark')document.documentElement.setAttribute('data-theme',s)}catch(e){}"
+      + "})();";
 
 
     /**
@@ -158,6 +189,7 @@ public class MainActivity extends Activity {
      */
     private void injecter(final WebView vue) {
         try { vue.evaluateJavascript(GREFFON, null); } catch (Throwable ignored) { }
+        try { vue.evaluateJavascript(GREFFON_THEME, null); } catch (Throwable ignored) { }
     }
 
     private void injecterPlusTard(final WebView vue, long delai) {
@@ -189,13 +221,35 @@ public class MainActivity extends Activity {
         s.setCacheMode(WebSettings.LOAD_DEFAULT);
         s.setMediaPlaybackRequiresUserGesture(false);
 
-        // Permet au site de se reconnaitre dans l'APK (navInfo/notifMessage)
-        s.setUserAgentString(s.getUserAgentString() + " SonoraAPK/1.9");
+        // Sans ca, window.open() et les liens target="_blank" ne font
+        // ABSOLUMENT RIEN dans une WebView : elle n'a pas d'onglets, et le
+        // navigateur abandonne la demande en silence. C'est ce qui empechait
+        // le lien d'une publicite verrouillee de s'ouvrir -- donc d'etre
+        // validee, donc de se refermer. Voir onCreateWindow plus bas.
+        s.setSupportMultipleWindows(true);
+
+        /* L'identite du navigateur redevient celle d'origine.
+           On y ajoutait " SonoraAPK/1.9" pour que le site se reconnaisse dans
+           l'APK. Mais un agent utilisateur inhabituel est exactement ce que
+           les pare-feux d'hebergeur et les regies examinent pour trier les
+           robots : selon le reseau et l'adresse IP, la meme requete passait
+           depuis un navigateur et se faisait renvoyer une page de defi depuis
+           l'APK. Le site se reconnait maintenant a la presence de
+           window.SonoraNative, ce qui est de toute facon plus sur qu'une
+           chaine de caracteres. */
+
+        if (Build.VERSION.SDK_INT >= 29) {
+            /* La WebView sait assombrir une page toute seule. On lui retire ce
+               droit : Sonora possede deja ses deux themes et sait lequel poser
+               grace au pont. Deux mecanismes qui decident de la meme chose, ce
+               sont deux occasions de se contredire. */
+            try { s.setForceDark(WebSettings.FORCE_DARK_OFF); } catch (Throwable ignored) { }
+        }
 
         CookieManager.getInstance().setAcceptCookie(true);
         CookieManager.getInstance().setAcceptThirdPartyCookies(webView, true);
 
-        webView.addJavascriptInterface(new JsBridge(), "SonoraNative");
+        webView.addJavascriptInterface(new JsBridge(this), "SonoraNative");
 
         webView.setWebViewClient(new WebViewClient() {
             @Override
@@ -217,6 +271,8 @@ public class MainActivity extends Activity {
 
         webView.setWebChromeClient(new FullscreenChromeClient());
 
+        habillerSysteme();
+
         Intent i = new Intent(this, KeepAliveService.class);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             startForegroundService(i);
@@ -225,6 +281,81 @@ public class MainActivity extends Activity {
         }
 
         webView.loadUrl(SITE_URL);
+    }
+
+    /** Le telephone est-il en mode sombre ? Lu dans la configuration Android. */
+    private boolean modeSombre() {
+        try {
+            int f = getResources().getConfiguration().uiMode
+                    & Configuration.UI_MODE_NIGHT_MASK;
+            return f == Configuration.UI_MODE_NIGHT_YES;
+        } catch (Throwable t) {
+            return true;
+        }
+    }
+
+    /**
+     * Barre d'etat et barre de navigation assorties au mode en cours.
+     * Sans ca, un telephone en mode clair affichait une page blanche sous une
+     * barre noire, et l'heure devenait illisible des que la barre passait au
+     * blanc : le systeme ne sait pas ce que la page a decide de dessiner.
+     */
+    private void habillerSysteme() {
+        boolean sombre = modeSombre();
+        try {
+            getWindow().setStatusBarColor(sombre ? Color.BLACK : Color.WHITE);
+            getWindow().setNavigationBarColor(sombre ? Color.BLACK : Color.WHITE);
+        } catch (Throwable ignored) { }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            try {
+                View d = getWindow().getDecorView();
+                int f = d.getSystemUiVisibility();
+                if (sombre) {
+                    f &= ~View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR;
+                } else {
+                    f |= View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR;
+                }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    if (sombre) {
+                        f &= ~View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR;
+                    } else {
+                        f |= View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR;
+                    }
+                }
+                d.setSystemUiVisibility(f);
+            } catch (Throwable ignored) { }
+        }
+    }
+
+    /**
+     * L'utilisateur bascule clair/sombre pendant que l'app est ouverte.
+     * Le manifeste declare uiMode dans configChanges : l'activite n'est pas
+     * recreee, c'est donc ici, et nulle part ailleurs, qu'on l'apprend.
+     */
+    @Override
+    public void onConfigurationChanged(Configuration nouvelle) {
+        super.onConfigurationChanged(nouvelle);
+        habillerSysteme();
+        if (webView != null) {
+            injecter(webView);
+            try {
+                webView.evaluateJavascript(
+                        "try{if(window.__sonoraThemeMaj)window.__sonoraThemeMaj();}catch(e){}",
+                        null);
+            } catch (Throwable ignored) { }
+        }
+    }
+
+    /** Confie une adresse au navigateur du telephone. */
+    private void ouvrirDehors(String url) {
+        if (url == null || url.length() == 0) {
+            return;
+        }
+        try {
+            Intent i = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
+            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            startActivity(i);
+        } catch (Throwable ignored) { }
     }
 
     /**
@@ -267,6 +398,43 @@ public class MainActivity extends Activity {
     }
 
     private class FullscreenChromeClient extends WebChromeClient {
+
+        /**
+         * La page demande une nouvelle fenetre (target="_blank", window.open).
+         *
+         * Une WebView n'a pas d'onglets : sans ce relais, la demande est
+         * simplement abandonnee et le clic ne produit RIEN. On fabrique une
+         * WebView jetable dont le seul role est d'attraper l'adresse au vol,
+         * puis on la passe au navigateur du telephone.
+         */
+        @Override
+        public boolean onCreateWindow(WebView vue, boolean estDialogue,
+                                      boolean gesteUtilisateur, Message message) {
+            final WebView relais = new WebView(MainActivity.this);
+            relais.setWebViewClient(new WebViewClient() {
+                @Override
+                public boolean shouldOverrideUrlLoading(WebView v, String url) {
+                    ouvrirDehors(url);
+                    v.destroy();
+                    return true;
+                }
+
+                @Override
+                public boolean shouldOverrideUrlLoading(WebView v, WebResourceRequest r) {
+                    ouvrirDehors(r.getUrl() == null ? null : r.getUrl().toString());
+                    v.destroy();
+                    return true;
+                }
+            });
+            try {
+                WebView.WebViewTransport t = (WebView.WebViewTransport) message.obj;
+                t.setWebView(relais);
+                message.sendToTarget();
+            } catch (Throwable t) {
+                return false;
+            }
+            return true;
+        }
 
         @Override
         public void onShowCustomView(View view, CustomViewCallback callback) {
