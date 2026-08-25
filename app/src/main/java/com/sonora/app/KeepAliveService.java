@@ -46,10 +46,63 @@ public class KeepAliveService extends Service {
     public static final String ACT_FWD       = "com.sonora.app.FWD";
     public static final String ACT_BACK      = "com.sonora.app.BACK";
 
+    /**
+     * SIESTE. Sans lecture et sans ecran, ce service n'a plus rien a faire :
+     * il retire sa notification et s'arrete. C'est lui qui repondait de la
+     * ligne « consommation en arriere-plan » alors que rien ne jouait, et
+     * c'est cette consommation permanente qui faisait tuer l'application par
+     * le systeme.
+     *
+     * Deux minutes de battement : assez pour reprendre depuis la notification
+     * apres une pause courte, assez court pour ne pas trainer la nuit.
+     *
+     * Rien n'est casse au passage : tant que quelque chose joue, ou tant que
+     * l'ecran est sur l'application, la sieste est annulee. Et des que la page
+     * annonce qu'elle rejoue, le pont rallume le service (voir
+     * MainActivity.assurerService).
+     */
+    private static final long DELAI_SIESTE = 120000L;
+
     private static KeepAliveService instance;
+    private static boolean auPremierPlan = true;
 
     private MediaSession session;
     private final Handler ui = new Handler(Looper.getMainLooper());
+    private final Handler sieste = new Handler(Looper.getMainLooper());
+    private final Runnable dormir = new Runnable() {
+        @Override public void run() { sEndormir(); }
+    };
+
+    /** Le service tourne-t-il ? Lu par MainActivity avant de le rallumer. */
+    public static boolean vivant() { return instance != null; }
+
+    /** Pose par MainActivity a chaque onResume / onPause. */
+    public static void pousserPremierPlan(boolean visible) {
+        auPremierPlan = visible;
+        final KeepAliveService s = instance;
+        if (s == null) { return; }
+        s.majSieste();
+    }
+
+    private void majSieste() {
+        sieste.removeCallbacks(dormir);
+        if (!enLecture && !auPremierPlan) {
+            sieste.postDelayed(dormir, DELAI_SIESTE);
+        }
+    }
+
+    private void sEndormir() {
+        if (enLecture || auPremierPlan) { return; }   // la situation a change
+        MainActivity.mettreEnVeille();                // minuteurs JS a l'arret
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                stopForeground(Service.STOP_FOREGROUND_REMOVE);
+            } else {
+                stopForeground(true);
+            }
+        } catch (Throwable ignored) { }
+        stopSelf();
+    }
 
     private String titre = "Sonora";
     private String artiste = "";
@@ -126,9 +179,21 @@ public class KeepAliveService extends Service {
 
     public static void pousserEtat(boolean lecture) {
         final KeepAliveService s = instance;
-        if (s == null) { return; }
+        if (s == null) {
+            /* Le service dort et la page annonce qu'elle joue : on le rallume.
+               En pratique ce cas ne devrait pas arriver — la sieste ne part
+               que sans lecture ET sans ecran, et rien ne peut alors demarrer
+               tout seul. Mais si un jour quelque chose y parvient, mieux vaut
+               une notification qui revient qu'une lecture sans commandes. */
+            if (lecture) { MainActivity.assurerService(); }
+            return;
+        }
         s.pontOk = true;
-        if (s.enLecture != lecture) { s.enLecture = lecture; s.rafraichir(); }
+        if (s.enLecture != lecture) {
+            s.enLecture = lecture;
+            s.rafraichir();
+            s.majSieste();   // la lecture reprend : plus de sieste ; elle s'arrete : on l'arme
+        }
     }
 
     /**
@@ -212,6 +277,7 @@ public class KeepAliveService extends Service {
         session.setActive(true);
 
         startForeground(NOTIF_ID, construire());
+        majSieste();   // rallume au bon moment : si l'ecran est deja ailleurs, on compte
     }
 
     @Override
@@ -235,6 +301,7 @@ public class KeepAliveService extends Service {
 
     @Override
     public void onDestroy() {
+        sieste.removeCallbacksAndMessages(null);
         if (session != null) {
             session.setActive(false);
             session.release();

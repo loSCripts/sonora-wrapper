@@ -1,6 +1,25 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="AppTheme" parent="android:Theme.Material.Light.NoActionBar">
-        <item name="android:windowBackground">#FFFFFF</item>
+
+    <!-- Le fond de la fenetre est la PREMIERE chose peinte par Android, avant
+         meme que l'application n'existe. S'il est clair, on voit un flash
+         blanc a chaque lancement. -->
+    <style name="AppTheme" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">#0B0B0F</item>
+        <item name="android:colorBackground">#0B0B0F</item>
+        <item name="android:statusBarColor">#0B0B0F</item>
+        <item name="android:navigationBarColor">#0B0B0F</item>
+        <item name="android:windowAnimationStyle">@null</item>
     </style>
+
+    <!-- Ecran de demarrage : meme fond, et on interdit explicitement a Android
+         de dessiner une fenetre d'apercu claire. La suite est prise en charge
+         par le voile pose dans MainActivity, qui ne se leve qu'au premier
+         pixel reellement peint par la page. -->
+    <style name="AppTheme.Demarrage" parent="AppTheme">
+        <item name="android:windowBackground">#0B0B0F</item>
+        <item name="android:windowDisablePreview">false</item>
+        <item name="android:windowIsTranslucent">false</item>
+    </style>
+
 </resources>
