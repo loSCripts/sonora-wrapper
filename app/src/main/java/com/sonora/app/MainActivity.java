@@ -37,8 +37,13 @@ public class MainActivity extends Activity {
      * aussi). Attention : les playlists, les titres aimes et les points sont
      * gardes PAR ADRESSE dans la WebView. Changer d'adresse, c'est repartir
      * d'une bibliotheque vide pour ceux qui n'ont pas de compte Sonora Cloud.
+     *
+     * v2.2 : passage de sonora-sandy a sonora-musique, le site soumis a la
+     * regie (codes Adsterra, sans Monetag ni pub X). Le moment est choisi :
+     * la v2.2 change de cle de signature, il faut desinstaller l'ancienne
+     * version de toute facon, et la bibliotheque locale part avec elle.
      */
-    static final String SITE_URL = "https://sonora-sandy.vercel.app";
+    static final String SITE_URL = "https://sonora-musique.vercel.app";
 
     /** Le fond de l'application, partout : fenetre, WebView et voile. */
     private static final int FOND = 0xFF0B0B0F;
