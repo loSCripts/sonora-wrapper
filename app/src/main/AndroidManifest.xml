@@ -44,6 +44,16 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
 
+            <!-- Bouton « Ouvrir l'application » du site (v2.3). Le lien
+                 sonora://ouvrir?d=... ouvre Sonora en emportant les gouts
+                 du navigateur ; l'APK absente, Chrome telecharge sonora.apk. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="sonora" android:host="ouvrir" />
+            </intent-filter>
+
             <!-- Appui long sur l'icone Sonora (ecran d'accueil) -> "Diagnostic".
                  Impossible a declencher par accident, et rien a chercher dans
                  l'application : c'est le seul endroit ou il faut penser a

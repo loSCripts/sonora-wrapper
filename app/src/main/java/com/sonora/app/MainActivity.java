@@ -389,7 +389,49 @@ public class MainActivity extends Activity {
             startService(i);
         }
 
-        webView.loadUrl(SITE_URL);
+        webView.loadUrl(adresseDepart(getIntent()));
+    }
+
+    /**
+     * Code de reprise porte par le lien « Ouvrir l'application » du site
+     * (v2.3) : sonora://ouvrir?d=... emporte les gouts, les j'aime et les
+     * playlists du navigateur, l'APK ayant son propre stockage, vide.
+     * N'importe quelle page peut fabriquer ce lien : on n'en garde que le
+     * code (lettres, chiffres, - et _), jamais une adresse a charger, et le
+     * site demande a la personne avant de reprendre quoi que ce soit.
+     */
+    static String codeReprise(Intent i) {
+        if (i == null || !Intent.ACTION_VIEW.equals(i.getAction())) return null;
+        Uri u = i.getData();
+        if (u == null || !"sonora".equals(u.getScheme()) || !"ouvrir".equals(u.getHost())) return null;
+        String d;
+        try { d = u.getQueryParameter("d"); } catch (Throwable t) { return null; }
+        if (d == null || d.length() > 200000 || !d.matches("[zj][A-Za-z0-9_-]+")) return null;
+        return d;
+    }
+
+    private static String adresseDepart(Intent i) {
+        String d = codeReprise(i);
+        return d == null ? SITE_URL : SITE_URL + "/app.html#/importer/" + d;
+    }
+
+    /**
+     * Lien « Ouvrir l'application » touche alors que Sonora tourne deja
+     * (singleTask). Si l'application est deja chargee, on change seulement
+     * l'ancre : pas de rechargement, la musique en cours continue.
+     */
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        String d = codeReprise(intent);
+        if (d == null || webView == null) return;
+        String ici = webView.getUrl();
+        if (ici != null && ici.startsWith(SITE_URL + "/app.html")) {
+            webView.evaluateJavascript("location.hash='#/importer/" + d + "'", null);
+        } else {
+            webView.loadUrl(SITE_URL + "/app.html#/importer/" + d);
+        }
     }
 
     /**

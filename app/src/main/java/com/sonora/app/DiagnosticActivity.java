@@ -55,7 +55,7 @@ import java.net.URL;
  */
 public class DiagnosticActivity extends Activity {
 
-    private static final String VERSION = "2.2";
+    private static final String VERSION = "2.3";
     /** La meme adresse que l'application, sans deuxieme copie a tenir a jour. */
     private static final String SITE = MainActivity.SITE_URL;
 
