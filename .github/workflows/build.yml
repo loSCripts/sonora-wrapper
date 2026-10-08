@@ -30,16 +30,45 @@ jobs:
         with:
           gradle-version: '8.7'
 
+      # TOUJOURS LA MEME CLE DE SIGNATURE.
+      # Sans elle, chaque compilation fabriquait sa propre cle, et Android
+      # refuse d'installer une mise a jour signee par une autre cle : il
+      # fallait desinstaller Sonora a chaque version, et perdre au passage
+      # playlists, titres aimes et points (ils vivent dans l'application).
+      # La cle est rangee dans le secret SONORA_KEYSTORE (voir A-LIRE).
+      - name: Poser la cle de signature Sonora
+        env:
+          CLE: ${{ secrets.SONORA_KEYSTORE }}
+        run: |
+          if [ -n "$CLE" ]; then
+            mkdir -p ~/.android
+            printf '%s' "$CLE" | base64 -d > ~/.android/debug.keystore
+            echo "Cle Sonora posee : l'APK s'installera par-dessus l'ancien."
+          else
+            echo "::warning::Secret SONORA_KEYSTORE absent : cle neuve, il faudra desinstaller l'ancienne application."
+          fi
+
       - name: Compiler l'APK
         run: gradle assembleDebug --no-daemon
 
       - name: Renommer l'APK
         run: mv app/build/outputs/apk/debug/app-debug.apk sonora.apk
 
+      # Seule la branche main publie une version. Une autre branche sert a
+      # verifier que tout compile : son APK reste dans l'onglet Actions.
       - name: Publier la release
+        if: github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "build-${{ github.run_number }}" sonora.apk \
+            --target "${{ github.sha }}" \
             --title "Sonora build ${{ github.run_number }}" \
             --notes "APK installable directement depuis le telephone."
+
+      - name: Garder l'APK d'essai
+        if: github.ref != 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: sonora-apk
+          path: sonora.apk

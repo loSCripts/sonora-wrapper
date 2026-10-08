@@ -7,6 +7,8 @@
     <!-- Exigee a partir d'Android 14 pour un service de lecture. Sans effet
          en dessous, mais la declarer maintenant evite d'avoir a y revenir. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <!-- Verrous processeur et Wi-Fi, tenus UNIQUEMENT pendant la lecture
+         (voir KeepAliveService.majVerrous). -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
 
     <application
@@ -16,6 +18,20 @@
         android:hardwareAccelerated="true"
         android:allowBackup="true"
         android:theme="@style/AppTheme">
+
+        <!-- Safe Browsing filtre les requetes de la WebView contre une liste
+             Google mise a jour separement sur chaque telephone. Quand un
+             domaine y figure a tort, les appels reseau echouent en silence :
+             aucune erreur cote page, juste une reponse qui n'arrive jamais.
+             C'est un des chemins par lesquels les recommandations pouvaient
+             disparaitre sur un telephone et pas sur un autre. On ne charge
+             ici qu'un site connu, le notre ; les liens exterieurs (publicites
+             comprises) partent dans le navigateur du telephone, qui garde,
+             lui, sa propre protection.
+             (Present en v2.1, perdu en v2.0 : remis.) -->
+        <meta-data
+            android:name="android.webkit.WebView.EnableSafeBrowsing"
+            android:value="false" />
 
         <activity
             android:name=".MainActivity"
@@ -27,7 +43,22 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+
+            <!-- Appui long sur l'icone Sonora (ecran d'accueil) -> "Diagnostic".
+                 Impossible a declencher par accident, et rien a chercher dans
+                 l'application : c'est le seul endroit ou il faut penser a
+                 regarder quand quelque chose ne va pas sur un telephone
+                 qu'on n'a pas en main. (v2.1, perdu en v2.0 : remis.) -->
+            <meta-data
+                android:name="android.app.shortcuts"
+                android:resource="@xml/shortcuts" />
         </activity>
+
+        <activity
+            android:name=".DiagnosticActivity"
+            android:exported="true"
+            android:label="@string/diag_court"
+            android:configChanges="orientation|screenSize|keyboardHidden|uiMode" />
 
         <service
             android:name=".KeepAliveService"
