@@ -2,3 +2,5 @@ build/
 .gradle/
 local.properties
 *.apk
+# APK servie par le site (voir distribution/LISEZ-MOI.md)
+!distribution/sonora.apk

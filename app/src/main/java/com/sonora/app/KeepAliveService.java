@@ -5,16 +5,23 @@ import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.Service;
+import android.content.BroadcastReceiver;
+import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.media.AudioManager;
 import android.media.MediaMetadata;
 import android.media.session.MediaSession;
 import android.media.session.PlaybackState;
+import android.net.wifi.WifiManager;
 import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
+import android.os.PowerManager;
+import android.os.SystemClock;
 import android.util.Base64;
 
 import java.io.ByteArrayOutputStream;
@@ -63,6 +70,30 @@ public class KeepAliveService extends Service {
      */
     private static final long DELAI_SIESTE = 120000L;
 
+    /**
+     * L'aiguille de la notification avance toute seule (vitesse 1.0 dans
+     * PlaybackState) : la republier chaque seconde, comme avant la v2.2,
+     * c'etait un aller-retour avec le systeme par seconde, pendant toute
+     * l'ecoute, pour dire ce qu'il savait deja. On ne republie plus que si la
+     * vraie position s'ecarte de ce qu'il a calcule (saut, mise en tampon).
+     */
+    private static final long DERIVE_MAX_MS = 2000L;
+
+    /**
+     * VERROUS DE LECTURE. Ecran eteint, Android coupe le Wi-Fi en economie
+     * et laisse s'endormir le processeur entre deux paquets : c'est ce qui
+     * faisait hacher ou s'arreter la musique apres quelques minutes de poche.
+     * Les lecteurs de musique gardent donc les deux eveilles PENDANT la
+     * lecture, et seulement pendant. Le verrou processeur a une duree de vie
+     * limitee, renouvelee par le battement de la page : si la page se tait
+     * (plantage), il tombe tout seul au lieu de vider la batterie.
+     */
+    private static final long VERROU_DUREE_MS = 3 * 60 * 1000L;
+    private static final long VERROU_RENOUVELLEMENT_MS = 60 * 1000L;
+
+    /** Sans nouvelles de la page depuis ce delai, on cesse de croire qu'elle joue. */
+    private static final long SILENCE_MAX_MS = 90 * 1000L;
+
     private static KeepAliveService instance;
     private static boolean auPremierPlan = true;
 
@@ -94,14 +125,7 @@ public class KeepAliveService extends Service {
     private void sEndormir() {
         if (enLecture || auPremierPlan) { return; }   // la situation a change
         MainActivity.mettreEnVeille();                // minuteurs JS a l'arret
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                stopForeground(Service.STOP_FOREGROUND_REMOVE);
-            } else {
-                stopForeground(true);
-            }
-        } catch (Throwable ignored) { }
-        stopSelf();
+        sEteindre();
     }
 
     private String titre = "Sonora";
@@ -120,6 +144,46 @@ public class KeepAliveService extends Service {
     private final Set<String> actions = new HashSet<String>();
     private String dernierChemin = null;
     private String source = null;
+
+    /** Ce que le systeme a recu en dernier : de quoi recalculer son aiguille. */
+    private long publiePosition = 0;
+    private long publieA = 0;
+    private float publieVitesse = 0f;
+
+    private PowerManager.WakeLock verrouCpu;
+    private WifiManager.WifiLock verrouWifi;
+    private long verrouPrisA = 0;
+    private boolean ecouteCasque = false;
+    private volatile long dernierSigne = 0;
+
+    /**
+     * Ecouteurs debranches ou Bluetooth coupe : Android previent juste avant
+     * de basculer le son sur le haut-parleur. Tous les lecteurs mettent en
+     * pause a ce moment-la, sinon la musique part a pleine voix dans la piece.
+     */
+    private final BroadcastReceiver casqueParti = new BroadcastReceiver() {
+        @Override public void onReceive(Context c, Intent i) {
+            if (i != null && AudioManager.ACTION_AUDIO_BECOMING_NOISY.equals(i.getAction())
+                    && enLecture) {
+                MainActivity.appelerJs("pause", 0);
+            }
+        }
+    };
+
+    /** Filet : une page qui ne donne plus signe de vie ne joue plus. */
+    private final Runnable surveillance = new Runnable() {
+        @Override public void run() {
+            if (!enLecture) { return; }
+            if (SystemClock.elapsedRealtime() - dernierSigne > SILENCE_MAX_MS) {
+                enLecture = false;
+                rafraichir();
+                majVerrous();
+                majSieste();
+                return;
+            }
+            sieste.postDelayed(this, SILENCE_MAX_MS);
+        }
+    };
 
     /** Remonte quel chemin a effectivement pilote le lecteur (diagnostic). */
     public static void pousserChemin(String c) {
@@ -189,30 +253,98 @@ public class KeepAliveService extends Service {
             return;
         }
         s.pontOk = true;
+        s.dernierSigne = SystemClock.elapsedRealtime();
         if (s.enLecture != lecture) {
             s.enLecture = lecture;
             s.rafraichir();
-            s.majSieste();   // la lecture reprend : plus de sieste ; elle s'arrete : on l'arme
+            s.ui.post(new Runnable() {
+                @Override public void run() {
+                    s.majVerrous();
+                    s.majSieste();   // la lecture reprend : plus de sieste ; elle s'arrete : on l'arme
+                }
+            });
         }
     }
 
     /**
-     * Appele environ une fois par seconde. On ne reconstruit PAS la
+     * Appele a chaque battement de la page. On ne reconstruit PAS la
      * notification : la barre de progression du volet media est lue sur la
-     * MediaSession, il suffit donc de republier l'etat de lecture.
+     * MediaSession. Et on ne republie l'etat que si l'aiguille calculee par
+     * le systeme s'est ecartee de la vraie (voir DERIVE_MAX_MS).
      */
     public static void pousserPosition(long duree, long position) {
         final KeepAliveService s = instance;
         if (s == null) { return; }
         s.pontOk = true;
+        s.dernierSigne = SystemClock.elapsedRealtime();
+        if (s.enLecture
+                && s.dernierSigne - s.verrouPrisA > VERROU_RENOUVELLEMENT_MS) {
+            s.ui.post(new Runnable() {
+                @Override public void run() { s.majVerrous(); }
+            });
+        }
         if (duree == s.dureeMs && position == s.positionMs) { return; }
         boolean dureeChange = (duree > 0) != (s.dureeMs > 0);
         s.dureeMs = duree;
         s.positionMs = position;
         if (dureeChange) {
             s.rafraichir();          // apparition / disparition de la barre
+        } else if (s.aiguilleDerive(position)) {
+            s.majSessionSeule();     // saut ou tampon : on recale l'aiguille
+        }
+    }
+
+    private boolean aiguilleDerive(long position) {
+        long ecoule = SystemClock.elapsedRealtime() - publieA;
+        long attendu = publiePosition + (long) (ecoule * publieVitesse);
+        return Math.abs(position - attendu) > DERIVE_MAX_MS;
+    }
+
+    /** Verrous pris pendant la lecture, rendus des qu'elle s'arrete. */
+    private void majVerrous() {
+        if (enLecture) {
+            try {
+                if (verrouCpu == null) {
+                    PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
+                    verrouCpu = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "sonora:lecture");
+                    verrouCpu.setReferenceCounted(false);
+                }
+                verrouCpu.acquire(VERROU_DUREE_MS);   // repousse aussi l'echeance
+                verrouPrisA = SystemClock.elapsedRealtime();
+            } catch (Throwable ignored) { }
+            try {
+                if (verrouWifi == null) {
+                    WifiManager wm = (WifiManager) getApplicationContext()
+                            .getSystemService(Context.WIFI_SERVICE);
+                    verrouWifi = wm.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF,
+                            "sonora:lecture");
+                    verrouWifi.setReferenceCounted(false);
+                }
+                if (!verrouWifi.isHeld()) { verrouWifi.acquire(); }
+            } catch (Throwable ignored) { }
+            if (!ecouteCasque) {
+                try {
+                    registerReceiver(casqueParti,
+                            new IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY));
+                    ecouteCasque = true;
+                } catch (Throwable ignored) { }
+            }
+            sieste.removeCallbacks(surveillance);
+            sieste.postDelayed(surveillance, SILENCE_MAX_MS);
         } else {
-            s.majSessionSeule();     // simple avance de l'aiguille
+            lacherVerrous();
+        }
+    }
+
+    private void lacherVerrous() {
+        sieste.removeCallbacks(surveillance);
+        try { if (verrouCpu != null && verrouCpu.isHeld()) { verrouCpu.release(); } }
+        catch (Throwable ignored) { }
+        try { if (verrouWifi != null && verrouWifi.isHeld()) { verrouWifi.release(); } }
+        catch (Throwable ignored) { }
+        if (ecouteCasque) {
+            try { unregisterReceiver(casqueParti); } catch (Throwable ignored) { }
+            ecouteCasque = false;
         }
     }
 
@@ -280,8 +412,20 @@ public class KeepAliveService extends Service {
         majSieste();   // rallume au bon moment : si l'ecran est deja ailleurs, on compte
     }
 
+    /**
+     * START_NOT_STICKY, plus START_STICKY. Avec STICKY, quand Android tuait
+     * l'application, il relancait CE service tout seul, sans activite et sans
+     * page : une notification « En attente du lecteur... » qui ne pilotait
+     * plus rien, et qui ne s'endormait jamais (auPremierPlan repart a vrai a
+     * chaque nouveau processus). C'etait une consommation en arriere-plan
+     * permanente, pour rien. Sans page, le service s'arrete.
+     */
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
+        if (!MainActivity.vueVivante()) {
+            sEteindre();
+            return START_NOT_STICKY;
+        }
         if (intent != null && intent.getAction() != null) {
             String a = intent.getAction();
             if (ACT_PLAYPAUSE.equals(a)) {
@@ -296,11 +440,24 @@ public class KeepAliveService extends Service {
                 MainActivity.appelerJs("seekbackward", 10);
             }
         }
-        return START_STICKY;
+        return START_NOT_STICKY;
+    }
+
+    private void sEteindre() {
+        lacherVerrous();
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                stopForeground(Service.STOP_FOREGROUND_REMOVE);
+            } else {
+                stopForeground(true);
+            }
+        } catch (Throwable ignored) { }
+        stopSelf();
     }
 
     @Override
     public void onDestroy() {
+        lacherVerrous();
         sieste.removeCallbacksAndMessages(null);
         if (session != null) {
             session.setActive(false);
@@ -389,12 +546,16 @@ public class KeepAliveService extends Service {
             // La vitesse 1.0 en lecture permet a Android d'extrapoler la
             // position entre deux envois : l'aiguille avance en continu et
             // les deux compteurs aux extremites de la barre suivent.
+            float vitesse = enLecture ? 1.0f : 0.0f;
             session.setPlaybackState(new PlaybackState.Builder()
                     .setActions(dispo)
                     .setState(enLecture ? PlaybackState.STATE_PLAYING
                                         : PlaybackState.STATE_PAUSED,
-                              positionMs, enLecture ? 1.0f : 0.0f)
+                              positionMs, vitesse)
                     .build());
+            publiePosition = positionMs;
+            publieA = SystemClock.elapsedRealtime();
+            publieVitesse = vitesse;
         } catch (Throwable ignored) { }
     }
 

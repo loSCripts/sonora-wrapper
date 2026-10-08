@@ -55,8 +55,9 @@ import java.net.URL;
  */
 public class DiagnosticActivity extends Activity {
 
-    private static final String VERSION = "2.1";
-    private static final String SITE = "https://sonora-sandy.vercel.app";
+    private static final String VERSION = "2.3";
+    /** La meme adresse que l'application, sans deuxieme copie a tenir a jour. */
+    private static final String SITE = MainActivity.SITE_URL;
 
     /** Page du site la plus legere : meme origine, aucun lecteur lance. */
     private static final String PAGE_ESSAI = SITE + "/legal.html";
