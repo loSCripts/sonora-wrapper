@@ -24,6 +24,11 @@ jobs:
 
       - name: Preparer le SDK Android
         uses: android-actions/setup-android@v3
+        with:
+          # La valeur par defaut demande aussi le paquet historique « tools »,
+          # que Google ne fournit plus : l'etape echouait avant meme de
+          # compiler (« Failed to find package 'tools' », constate le 08/10).
+          packages: 'platform-tools'
 
       - name: Installer Gradle
         uses: gradle/actions/setup-gradle@v4
