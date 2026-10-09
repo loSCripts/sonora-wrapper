@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Fond de app.html en theme sombre (variable bg). -->
+    <color name="fond">#000000</color>
+    <bool name="barre_claire">false</bool>
+</resources>

@@ -5,14 +5,12 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.res.Configuration;
 import android.graphics.Color;
-import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.Message;
-import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowManager;
@@ -25,8 +23,6 @@ import android.webkit.WebView;
 import android.webkit.ValueCallback;
 import android.webkit.WebViewClient;
 import android.widget.FrameLayout;
-import android.widget.LinearLayout;
-import android.widget.TextView;
 
 import java.lang.ref.WeakReference;
 
@@ -45,8 +41,18 @@ public class MainActivity extends Activity {
      */
     static final String SITE_URL = "https://sonora-musique.vercel.app";
 
-    /** Le fond de l'application, partout : fenetre, WebView et voile. */
-    private static final int FOND = 0xFF0B0B0F;
+    /**
+     * Le fond de l'application, partout : fenetre, WebView et voile. C'est
+     * EXACTEMENT celui de la page (--bg de app.html, sombre et clair) : quand
+     * le voile se leve, aucune couleur ne change, on ne voit donc rien.
+     * (v2.4 : avant, un gris bleute #0B0B0F, meme en mode clair.)
+     */
+    private static final int FOND_SOMBRE = 0xFF000000;
+    private static final int FOND_CLAIR = 0xFFECECED;
+
+    private int fond() {
+        return modeSombre() ? FOND_SOMBRE : FOND_CLAIR;
+    }
 
     /**
      * Au-dela, on retire le voile meme si la page n'a rien signale. Une page
@@ -307,47 +313,20 @@ public class MainActivity extends Activity {
      *   . le fond de la fenetre est deja sombre (styles.xml) ;
      *   . la WebView elle-meme recoit ce fond (setBackgroundColor), sinon elle
      *     peint du blanc par-dessus ;
-     *   . un voile de la meme couleur, avec le nom de l'application, couvre
-     *     tout jusqu'au PREMIER RENDU REEL de la page (onPageCommitVisible),
-     *     pas seulement jusqu'a la fin du chargement.
+     *   . un voile de la meme couleur couvre tout jusqu'au PREMIER RENDU
+     *     REEL de la page (onPageCommitVisible), pas seulement jusqu'a la fin
+     *     du chargement.
+     *
+     * v2.4 : le voile est VIDE. Il portait « SONORA » et un trait vert ; le
+     * plus souvent il ne restait affiche qu'un instant, juste le temps de voir
+     * passer un logo a moitie dessine (« SO »). Un aplat de la couleur de la
+     * page ne se remarque pas : l'application a l'air de s'ouvrir directement.
      */
     private View construireVoile() {
-        FrameLayout v = new FrameLayout(this);
-        v.setBackgroundColor(FOND);
+        View v = new View(this);
+        v.setBackgroundColor(fond());
         v.setClickable(true);          // rien ne passe a travers pendant l'attente
-
-        LinearLayout col = new LinearLayout(this);
-        col.setOrientation(LinearLayout.VERTICAL);
-        col.setGravity(Gravity.CENTER);
-
-        TextView nom = new TextView(this);
-        nom.setText("SONORA");
-        nom.setTextColor(Color.WHITE);
-        nom.setTextSize(28);
-        nom.setLetterSpacing(0.18f);
-        nom.setGravity(Gravity.CENTER);
-
-        View trait = new View(this);
-        GradientDrawable g = new GradientDrawable();
-        g.setColor(0xFF1DB954);
-        g.setCornerRadius(3f);
-        trait.setBackground(g);
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(46), dp(3));
-        lp.topMargin = dp(14);
-        trait.setLayoutParams(lp);
-
-        col.addView(nom);
-        col.addView(trait);
-
-        FrameLayout.LayoutParams cl = new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        cl.gravity = Gravity.CENTER;
-        v.addView(col, cl);
         return v;
-    }
-
-    private int dp(int v) {
-        return Math.round(v * getResources().getDisplayMetrics().density);
     }
 
     private void retirerVoile() {
@@ -367,7 +346,7 @@ public class MainActivity extends Activity {
         sContexte = getApplicationContext();
 
         root = new FrameLayout(this);
-        root.setBackgroundColor(FOND);
+        root.setBackgroundColor(fond());
         setContentView(root);
 
         creerVue();
@@ -442,7 +421,7 @@ public class MainActivity extends Activity {
     private void creerVue() {
         webView = new BackgroundWebView(this);
         sWeb = new WeakReference<WebView>(webView);
-        webView.setBackgroundColor(FOND);          // sans ca : rectangle blanc
+        webView.setBackgroundColor(fond());        // sans ca : rectangle blanc
         root.addView(webView, 0, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT));

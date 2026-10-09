@@ -4,11 +4,15 @@
     <!-- Le fond de la fenetre est la PREMIERE chose peinte par Android, avant
          meme que l'application n'existe. S'il est clair, on voit un flash
          blanc a chaque lancement. -->
+    <!-- @color/fond : le fond de la page (#ECECED en clair, #000 en sombre,
+         voir values-night/colors.xml). Avant la v2.4, un gris bleute fixe :
+         en mode clair, l'ouverture passait du sombre au clair. -->
     <style name="AppTheme" parent="android:Theme.Material.NoActionBar">
-        <item name="android:windowBackground">#0B0B0F</item>
-        <item name="android:colorBackground">#0B0B0F</item>
-        <item name="android:statusBarColor">#0B0B0F</item>
-        <item name="android:navigationBarColor">#0B0B0F</item>
+        <item name="android:windowBackground">@color/fond</item>
+        <item name="android:colorBackground">@color/fond</item>
+        <item name="android:statusBarColor">@color/fond</item>
+        <item name="android:navigationBarColor">@color/fond</item>
+        <item name="android:windowLightStatusBar">@bool/barre_claire</item>
         <item name="android:windowAnimationStyle">@null</item>
     </style>
 
@@ -17,7 +21,7 @@
          par le voile pose dans MainActivity, qui ne se leve qu'au premier
          pixel reellement peint par la page. -->
     <style name="AppTheme.Demarrage" parent="AppTheme">
-        <item name="android:windowBackground">#0B0B0F</item>
+        <item name="android:windowBackground">@color/fond</item>
         <item name="android:windowDisablePreview">false</item>
         <item name="android:windowIsTranslucent">false</item>
     </style>

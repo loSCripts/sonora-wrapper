@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Fond de app.html en theme clair (variable bg). -->
+    <color name="fond">#ECECED</color>
+    <bool name="barre_claire">true</bool>
+</resources>
