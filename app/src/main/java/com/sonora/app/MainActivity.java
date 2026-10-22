@@ -24,6 +24,8 @@ import android.view.WindowManager;
 import android.webkit.CookieManager;
 import android.webkit.DownloadListener;
 import android.webkit.RenderProcessGoneDetail;
+import android.webkit.ServiceWorkerClient;
+import android.webkit.ServiceWorkerController;
 import android.webkit.URLUtil;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
@@ -727,13 +729,7 @@ public class MainActivity extends Activity {
             /** Fil reseau de la WebView : sert /__sonora_fichier/<jeton>. */
             @Override
             public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest r) {
-                Uri u = r.getUrl();
-                String chemin = u.getPath();
-                if (chemin == null || !chemin.startsWith(PREFIXE_FICHIER)
-                        || !"https".equals(u.getScheme()) || !HOTE.equals(u.getHost())) {
-                    return null;
-                }
-                return servirFichier(chemin.substring(PREFIXE_FICHIER.length()));
+                return intercepterFichier(r);
             }
 
             /**
@@ -766,6 +762,30 @@ public class MainActivity extends Activity {
         });
 
         webView.setWebChromeClient(new FullscreenChromeClient());
+
+        /* Les requetes faites par le service worker du site ne passent PAS
+           par le WebViewClient ci-dessus : sans ce relais, un ancien service
+           worker encore en place enverrait /__sonora_fichier/ chez Vercel. Le
+           site v120 le laisse passer, mais ce filet ne coute rien. */
+        try {
+            ServiceWorkerController.getInstance().setServiceWorkerClient(new ServiceWorkerClient() {
+                @Override
+                public WebResourceResponse shouldInterceptRequest(WebResourceRequest r) {
+                    return intercepterFichier(r);
+                }
+            });
+        } catch (Throwable ignored) { }
+    }
+
+    /** /__sonora_fichier/<jeton> sur l'hote du site : le fichier ; sinon le reseau. */
+    private WebResourceResponse intercepterFichier(WebResourceRequest r) {
+        Uri u = r.getUrl();
+        String chemin = u == null ? null : u.getPath();
+        if (chemin == null || !chemin.startsWith(PREFIXE_FICHIER)
+                || !"https".equals(u.getScheme()) || !HOTE.equals(u.getHost())) {
+            return null;
+        }
+        return servirFichier(chemin.substring(PREFIXE_FICHIER.length()));
     }
 
     // -----------------------------------------------------------------
