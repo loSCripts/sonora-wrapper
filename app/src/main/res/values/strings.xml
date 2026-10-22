@@ -3,4 +3,12 @@
     <string name="app_name">Sonora</string>
     <string name="diag_court">Diagnostic</string>
     <string name="diag_long">Diagnostic Sonora</string>
+
+    <!-- Ecran natif quand la page ne peut pas s'ouvrir (EcranHorsLigne). -->
+    <string name="hors_ligne_titre">Pas de connexion</string>
+    <string name="hors_ligne_texte">Sonora a besoin d\'Internet pour s\'ouvrir. Vérifie le Wi-Fi ou les données mobiles : la page reviendra d\'elle-même dès que le réseau sera là.</string>
+    <string name="serveur_titre">Sonora ne répond pas</string>
+    <string name="serveur_texte">Le site est momentanément indisponible. Réessaie dans un instant.</string>
+    <string name="reessayer">Réessayer</string>
+    <string name="connexion_en_cours">Connexion…</string>
 </resources>

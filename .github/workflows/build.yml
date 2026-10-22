@@ -36,28 +36,40 @@ jobs:
           gradle-version: '8.7'
 
       # TOUJOURS LA MEME CLE DE SIGNATURE.
-      # Sans elle, chaque compilation fabriquait sa propre cle, et Android
-      # refuse d'installer une mise a jour signee par une autre cle : il
-      # fallait desinstaller Sonora a chaque version, et perdre au passage
-      # playlists, titres aimes et points (ils vivent dans l'application).
-      # La cle est rangee dans le secret SONORA_KEYSTORE (voir A-LIRE).
+      # Sans elle, Android refuse d'installer une mise a jour par-dessus
+      # l'ancienne : il faudrait desinstaller Sonora, et perdre playlists,
+      # titres aimes et points (ils vivent dans l'application).
+      # v2.5 : c'est la MEME cle qu'avant (meme certificat), mais rangee sous
+      # un vrai mot de passe, et l'APK est compilee en « release » (plus de
+      # mode debogage). Deux secrets, tous deux obligatoires :
+      #   SONORA_KEYSTORE      le fichier de cle, en base64
+      #   SONORA_KEYSTORE_MDP  son mot de passe
+      # S'il en manque un, on s'arrete ici, en clair : une APK signee d'une
+      # autre cle ne s'installerait pas par-dessus.
       - name: Poser la cle de signature Sonora
         env:
           CLE: ${{ secrets.SONORA_KEYSTORE }}
+          MDP: ${{ secrets.SONORA_KEYSTORE_MDP }}
         run: |
-          if [ -n "$CLE" ]; then
-            mkdir -p ~/.android
-            printf '%s' "$CLE" | base64 -d > ~/.android/debug.keystore
-            echo "Cle Sonora posee : l'APK s'installera par-dessus l'ancien."
-          else
-            echo "::warning::Secret SONORA_KEYSTORE absent : cle neuve, il faudra desinstaller l'ancienne application."
+          if [ -z "$CLE" ] || [ -z "$MDP" ]; then
+            echo "::error::Secrets SONORA_KEYSTORE et SONORA_KEYSTORE_MDP obligatoires (voir 4-APK-v2.5/A-FAIRE-APK.md)."
+            exit 1
           fi
+          printf '%s' "$CLE" | base64 -d > "$RUNNER_TEMP/sonora-release.p12"
+          echo "SONORA_KEYSTORE_FICHIER=$RUNNER_TEMP/sonora-release.p12" >> "$GITHUB_ENV"
 
       - name: Compiler l'APK
-        run: gradle assembleDebug --no-daemon
+        env:
+          SONORA_KEYSTORE_MDP: ${{ secrets.SONORA_KEYSTORE_MDP }}
+          SONORA_KEY_ALIAS: sonora
+        run: gradle assembleRelease --no-daemon
 
       - name: Renommer l'APK
-        run: mv app/build/outputs/apk/debug/app-debug.apk sonora.apk
+        run: mv app/build/outputs/apk/release/app-release.apk sonora.apk
+
+      - name: Effacer la cle du disque
+        if: always()
+        run: rm -f "$RUNNER_TEMP/sonora-release.p12"
 
       # Seule la branche main publie une version. Une autre branche sert a
       # verifier que tout compile : son APK reste dans l'onglet Actions.

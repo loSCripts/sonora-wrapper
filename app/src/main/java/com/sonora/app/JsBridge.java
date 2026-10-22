@@ -1,81 +1,140 @@
 package com.sonora.app;
 
-import android.content.Context;
-import android.content.res.Configuration;
 import android.webkit.JavascriptInterface;
 
-public class JsBridge {
+/**
+ * window.SonoraNative, cote actions (v2.5).
+ *
+ * LE JETON. addJavascriptInterface publie cet objet dans TOUTES les frames,
+ * y compris les cadres de publicite : avant la 2.5, une pub pouvait garder
+ * les verrous allumes (onState), reecrire la notification ou faire
+ * telecharger une adresse a l'application. Chaque methode qui AGIT exige
+ * donc en premier argument le jeton que MainActivity pose dans le seul cadre
+ * principal, et seulement quand c'est le site Sonora (window.__snbJeton,
+ * renouvele a chaque page). Sans lui : rien ne se passe, "refus:jeton".
+ *
+ * Contrat a respecter a la lettre : le site v120 est ecrit contre lui.
+ */
+public class JsBridge extends PontLecture {
 
-    private final Context ctx;
+    private static final String REFUS = "refus:jeton";
+    private static final String OK = "ok";
 
-    public JsBridge(Context c) {
-        this.ctx = c.getApplicationContext();
+    private final MainActivity activite;
+
+    public JsBridge(MainActivity a) {
+        super(a);
+        this.activite = a;
     }
 
-    /**
-     * "light" ou "dark" : le VRAI reglage clair/sombre du telephone, lu dans
-     * la configuration Android.
-     *
-     * PIEGE. On ne peut pas demander ca au navigateur depuis la page. Une
-     * WebView ne repond pas a prefers-color-scheme d'apres le reglage du
-     * telephone mais d'apres le theme de l'application qui l'heberge, et sa
-     * facon d'en decider change avec la version de WebView installee -- donc
-     * d'un constructeur a l'autre. Le site (themeSysLight dans app.html)
-     * appelle cette methode en premier : sans elle, il retombe sur la
-     * reponse de la WebView, celle qui se trompe.
-     */
-    @JavascriptInterface
-    public String modeSysteme() {
-        try {
-            int f = ctx.getResources().getConfiguration().uiMode
-                    & Configuration.UI_MODE_NIGHT_MASK;
-            return f == Configuration.UI_MODE_NIGHT_YES ? "dark" : "light";
-        } catch (Throwable t) {
-            return "";
-        }
+    private boolean refuse(String jeton) {
+        return !activite.jetonValide(jeton);
     }
 
+    // -----------------------------------------------------------------
+    //  Greffon de lecture (injecte par MainActivity, pas par le site)
+    // -----------------------------------------------------------------
+
     @JavascriptInterface
-    public void onPont() {
+    public String onPont(String jeton) {
+        if (refuse(jeton)) { return REFUS; }
         KeepAliveService.pousserPont();
+        return OK;
     }
 
     @JavascriptInterface
-    public void onMeta(String titre, String artiste, String album, String pochette) {
+    public String onMeta(String jeton, String titre, String artiste, String album, String pochette) {
+        if (refuse(jeton)) { return REFUS; }
         KeepAliveService.pousserMeta(titre, artiste, album, pochette);
+        return OK;
     }
 
     /**
-     * Le service s'arrete tout seul apres deux minutes sans lecture et sans
-     * ecran. Quand la page annonce qu'elle rejoue, il faut donc le rallumer
-     * AVANT de lui parler, sinon la notification ne revient jamais et les
-     * boutons de la barre disparaissent pour de bon.
+     * La premiere lecture fait naitre le service et sa notification (v2.5 :
+     * plus rien a l'ouverture). Il faut le faire AVANT de lui parler, sinon
+     * la notification ne vient jamais.
      */
     @JavascriptInterface
-    public void onState(boolean enLecture) {
-        if (enLecture) { MainActivity.assurerService(); }
+    public String onState(String jeton, boolean enLecture) {
+        if (refuse(jeton)) { return REFUS; }
         KeepAliveService.pousserEtat(enLecture);
+        if (enLecture) { MainActivity.assurerService(); }
+        return OK;
     }
 
     @JavascriptInterface
-    public void onPosition(double dureeMs, double positionMs) {
+    public String onPosition(String jeton, double dureeMs, double positionMs) {
+        if (refuse(jeton)) { return REFUS; }
         KeepAliveService.pousserPosition((long) dureeMs, (long) positionMs);
+        return OK;
     }
 
     @JavascriptInterface
-    public void onActions(String listeCsv) {
+    public String onActions(String jeton, String listeCsv) {
+        if (refuse(jeton)) { return REFUS; }
         KeepAliveService.pousserActions(listeCsv);
+        return OK;
     }
 
     /** Moteur de lecture en cours cote site : "yt", "sc" ou "audio". */
     @JavascriptInterface
-    public void onMoteur(String moteur) {
+    public String onMoteur(String jeton, String moteur) {
+        if (refuse(jeton)) { return REFUS; }
         KeepAliveService.pousserMoteur(moteur);
+        return OK;
     }
 
-    /** Diagnostic : d'ou viennent l'etat et la position (ex. "yt/site"). */
+    /** Diagnostic : d'ou viennent l'etat et la position (ex. "yt/site/cur"). */
     @JavascriptInterface
-    public void onSource(String source) {
+    public String onSource(String jeton, String source) {
+        if (refuse(jeton)) { return REFUS; }
         KeepAliveService.pousserSource(source);
+        return OK;
+    }
+
+    // -----------------------------------------------------------------
+    //  Fonctions offertes au site
+    // -----------------------------------------------------------------
+
+    /** json : {"video","mode","nom","titre","artiste"} ; voir ExtracteurYoutube. */
+    @JavascriptInterface
+    public String telechargerYt(String jeton, String json) {
+        if (refuse(jeton)) { return REFUS; }
+        return activite.extracteur().lancer(json);
+    }
+
+    @JavascriptInterface
+    public String fichierDebut(String jeton, String nom, String mime) {
+        if (refuse(jeton)) { return REFUS; }
+        return activite.fichiers().debut(nom, mime);
+    }
+
+    @JavascriptInterface
+    public String fichierMorceau(String jeton, String id, String base64) {
+        if (refuse(jeton)) { return REFUS; }
+        return activite.fichiers().morceau(id, base64);
+    }
+
+    @JavascriptInterface
+    public String fichierFin(String jeton, String id) {
+        if (refuse(jeton)) { return REFUS; }
+        return activite.fichiers().fin(id);
+    }
+
+    /** navigator.share n'existe pas dans une WebView : le partage passe ici. */
+    @JavascriptInterface
+    public String partager(String jeton, String titre, String texte, String url) {
+        if (refuse(jeton)) { return REFUS; }
+        activite.partager(titre, texte, url);
+        return OK;
+    }
+
+    /** Le theme choisi DANS Sonora ("light" ou "dark"), pas celui du telephone. */
+    @JavascriptInterface
+    public String theme(String jeton, String valeur) {
+        if (refuse(jeton)) { return REFUS; }
+        if (!"light".equals(valeur) && !"dark".equals(valeur)) { return "refus:valeur"; }
+        activite.choisirTheme(valeur);
+        return OK;
     }
 }

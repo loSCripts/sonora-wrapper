@@ -1,30 +1,54 @@
 package com.sonora.app;
 
+import android.Manifest;
 import android.app.Activity;
+import android.app.DownloadManager;
+import android.content.ActivityNotFoundException;
 import android.content.Context;
 import android.content.Intent;
+import android.content.SharedPreferences;
+import android.content.pm.PackageManager;
 import android.content.res.Configuration;
 import android.graphics.Color;
+import android.graphics.drawable.ColorDrawable;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.Message;
+import android.os.ParcelFileDescriptor;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowManager;
 import android.webkit.CookieManager;
+import android.webkit.DownloadListener;
 import android.webkit.RenderProcessGoneDetail;
+import android.webkit.URLUtil;
+import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
+import android.webkit.WebResourceError;
 import android.webkit.WebResourceRequest;
+import android.webkit.WebResourceResponse;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
-import android.webkit.ValueCallback;
 import android.webkit.WebViewClient;
 import android.widget.FrameLayout;
+import android.widget.Toast;
 
+import org.json.JSONObject;
+
+import java.io.ByteArrayInputStream;
 import java.lang.ref.WeakReference;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.SecureRandom;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 
 public class MainActivity extends Activity {
 
@@ -40,6 +64,32 @@ public class MainActivity extends Activity {
      * version de toute facon, et la bibliotheque locale part avec elle.
      */
     static final String SITE_URL = "https://sonora-musique.vercel.app";
+
+    /** Seul hote a recevoir le jeton du pont et les fichiers locaux. */
+    private static final String HOTE = Uri.parse(SITE_URL).getHost();
+
+    /**
+     * Adresses de la MEME ORIGINE que le site, servies par l'application et
+     * non par Vercel : la page peut lire un fichier telecharge par
+     * fetch(local) pour en garder une copie hors ligne (v2.5).
+     */
+    private static final String PREFIXE_FICHIER = "/__sonora_fichier/";
+
+    static final String MESSAGE_STOCKAGE =
+            "Sonora n'a pas le droit d'écrire dans Téléchargements";
+
+    private static final int CODE_STOCKAGE = 7;
+
+    /**
+     * Une fenetre ouverte par la page qui n'a toujours recu aucune adresse
+     * apres ce delai ne menait nulle part : sa WebView relais est detruite
+     * au lieu de rester en memoire jusqu'a la fermeture.
+     */
+    private static final long DELAI_RELAIS_MS = 10000;
+
+    /** Theme choisi DANS Sonora (JsBridge.theme), garde entre deux lancements. */
+    private static final String PREFS = "sonora";
+    private static final String PREF_THEME = "theme";
 
     /**
      * Le fond de l'application, partout : fenetre, WebView et voile. C'est
@@ -82,9 +132,14 @@ public class MainActivity extends Activity {
      * CHANGEMENT v2.2 : en arriere-plan, meme PENDANT la lecture, un tour sur
      * deux suffit (la notification extrapole l'aiguille toute seule), et la
      * position ne traverse le pont que lorsqu'elle a change.
+     *
+     * CHANGEMENT v2.5 : chaque appel passe en premier le jeton du cadre
+     * principal (J(), lu a chaque appel : il change a chaque page). Sans lui,
+     * le pont refuse ; c'est ce qui le ferme aux cadres de publicite.
      */
     private static final String GREFFON =
-        "(function(){var N=window.SonoraNative;if(!N)return;if(window.__snb)return;window.__snb=1;var ms="
+        "(function(){var N=window.SonoraNative;if(!N)return;if(window.__snb)return;window.__snb=1;"
+          + "function J(){return window.__snbJeton||\"\"}var ms="
           + "navigator.mediaSession||null;var H={};if(ms&&ms.setActionHandler){var o=ms.setActionHandler.bind"
           + "(ms);ms.setActionHandler=function(a,f){if(f){H[a]=f}else{delete H[a]}try{o(a,f)}catch(e){}};}win"
           + "dow.__snbCall=function(a,d){var f=H[a];if(!f)return false;try{f({action:a,seekOffset:d,seekTime:"
@@ -111,18 +166,18 @@ public class MainActivity extends Activity {
           + " t=\"\",ar=\"\",al=\"\",u=\"\";var pc=piste();if(pc){t=pc.title||\"\";ar=pc.artist||\"\";al=pc.album||\"\";u=p"
           + "c.art||\"\"}else{var v=ms?ms.metadata:null;if(v){srcM=\"ms\";t=v.title||\"\";ar=v.artist||\"\";al=v.albu"
           + "m||\"\";if(v.artwork&&v.artwork.length)u=v.artwork[v.artwork.length-1].src||\"\"}else srcM=\"?\";}var "
-          + "sig=t+\"|\"+ar+\"|\"+al+\"|\"+u;if(sig!==mMeta){mMeta=sig;N.onMeta(t,ar,al,u)}}catch(e){}var e2=etat()"
+          + "sig=t+\"|\"+ar+\"|\"+al+\"|\"+u;if(sig!==mMeta){mMeta=sig;N.onMeta(J(),t,ar,al,u)}}catch(e){}var e2=etat()"
           + ";var tp=temps();var av=tp[1]-avantP;if(!e2&&avantP>=0&&av>0.3&&av<3){e2=true;srcE=\"mvt\"}avantP=t"
           + "p[1];var qd=Math.round(tp[0]*1000),qp=Math.round(tp[1]*1000);if(qd!==mD||qp!==mP){mD=qd;mP=qp;tr"
-          + "y{N.onPosition(qd,qp)}catch(e){}}if(e2!==mEtat){mEtat=e2;try{N.onState(e2)}catch(e){}}try{var la"
-          + "=Object.keys(H).join(\",\");if(la!==mAct){mAct=la;N.onActions(la)}}catch(e){}try{var mo=\"\";if(type"
-          + "of engine!==\"undefined\"&&engine)mo=\"\"+engine;if(mo!==mMo){mMo=mo;N.onMoteur(mo)}}catch(e){}var s"
-          + "=srcE+\"/\"+srcP+\"/\"+srcM;if(s!==mSrc){mSrc=s;try{N.onSource(s)}catch(e){}}}try{N.onPont()}catch(e"
+          + "y{N.onPosition(J(),qd,qp)}catch(e){}}if(e2!==mEtat){mEtat=e2;try{N.onState(J(),e2)}catch(e){}}try{var la"
+          + "=Object.keys(H).join(\",\");if(la!==mAct){mAct=la;N.onActions(J(),la)}}catch(e){}try{var mo=\"\";if(type"
+          + "of engine!==\"undefined\"&&engine)mo=\"\"+engine;if(mo!==mMo){mMo=mo;N.onMoteur(J(),mo)}}catch(e){}var s"
+          + "=srcE+\"/\"+srcP+\"/\"+srcM;if(s!==mSrc){mSrc=s;try{N.onSource(J(),s)}catch(e){}}}try{N.onPont(J())}catch(e"
           + "){}battement();setInterval(battement,1000);})();";
 
     /**
      * Trois chemins, essayes dans l'ordre. Le premier qui aboutit gagne et
-     * renvoie son nom, ce qui sert aussi de diagnostic dans la notification.
+     * renvoie son nom, ce qui sert aussi de diagnostic (ecran Diagnostic).
      *
      *  ms  : le gestionnaire mediaSession capture par le greffon
      *  fn  : les primitives du site (resume/halt/next/prev/seekAbs), qui sont
@@ -171,19 +226,54 @@ public class MainActivity extends Activity {
 
     private static WeakReference<WebView> sWeb = new WeakReference<>(null);
     private static Context sContexte;
+    /**
+     * Entre onStart et onStop : l'ecran montre l'application. Statique : le
+     * pont et le service le consultent avant de faire naitre la notification.
+     */
+    private static volatile boolean visible = false;
 
     private final Handler differe = new Handler(Looper.getMainLooper());
+    private final SecureRandom hasard = new SecureRandom();
 
     private BackgroundWebView webView;
     private FrameLayout root;
     private View voile;
     private boolean voileRetire = false;
-    /** Entre onStart et onStop : l'ecran montre l'application. */
-    private boolean visible = false;
     /** La page est morte pendant l'absence : on la recharge au retour. */
     private boolean rechargerAuRetour = false;
     private View customView;
     private WebChromeClient.CustomViewCallback customViewCallback;
+
+    /**
+     * Jeton du document affiche dans le cadre principal, s'il est du site ;
+     * null sinon. Renouvele a chaque onPageStarted, lu par le pont (fil
+     * JavaBridge).
+     */
+    private volatile String jetonPage;
+    /** Le chargement en cours du cadre principal a echoue. */
+    private boolean erreurChargement = false;
+    private String adresseEchouee;
+
+    /** Fichiers telecharges servis sous PREFIXE_FICHIER, oublies a la fermeture. */
+    private final Map<String, FichierLocal> fichiersLocaux =
+            new ConcurrentHashMap<String, FichierLocal>();
+
+    private static final class FichierLocal {
+        final long telechargement;
+        final String mime;
+
+        FichierLocal(long telechargement, String mime) {
+            this.telechargement = telechargement;
+            this.mime = mime;
+        }
+    }
+
+    private SharedPreferences preferences;
+    private ExtracteurYoutube extracteur;
+    private Telechargements fichiers;
+    private EcranHorsLigne horsLigne;
+    /** Demande d'autorisation de stockage en cours (Android 7 a 9). */
+    private CountDownLatch reponseStockage;
 
     /** Appele par le service quand on touche un bouton de la notification. */
     public static void appelerJs(String action, int secondes) {
@@ -198,6 +288,10 @@ public class MainActivity extends Activity {
         w.post(new Runnable() {
             @Override
             public void run() {
+                // Apres la sieste, les minuteurs de la page dorment : le
+                // bouton du casque ou de l'ecran verrouille doit d'abord les
+                // reveiller, sinon le lecteur ne repart pas.
+                try { w.resumeTimers(); } catch (Throwable ignored) { }
                 try {
                     w.evaluateJavascript(js, new ValueCallback<String>() {
                         @Override
@@ -213,17 +307,20 @@ public class MainActivity extends Activity {
                 }
             }
         });
+        // Si rien ne repart (une pause, par exemple), la sieste se rearme.
+        KeepAliveService.majSieste();
     }
 
     /**
-     * Le service s'arrete tout seul apres un moment sans lecture et sans
-     * ecran (voir KeepAliveService). Des que la page annonce qu'elle joue, il
-     * faut donc pouvoir le rallumer : c'est ce que fait cette methode, appelee
-     * par le pont.
+     * Le service, et sa notification, naissent a la PREMIERE lecture (v2.5),
+     * plus a l'ouverture : une notification « en attente » quand on n'ecoute
+     * rien n'avait rien a faire la. Et jamais depuis l'arriere-plan : Android
+     * 12 l'interdit (l'exception etait avalee et la lecture continuait sans
+     * commandes). Ecran ailleurs, on attend son retour : onStart s'en charge.
      */
     public static void assurerService() {
         final Context c = sContexte;
-        if (c == null || KeepAliveService.vivant()) { return; }
+        if (c == null || !visible || KeepAliveService.vivant()) { return; }
         try {
             Intent i = new Intent(c, KeepAliveService.class);
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -240,7 +337,7 @@ public class MainActivity extends Activity {
     }
 
     /**
-     * MISE EN VEILLE. Appelee par le service quand rien ne joue et que l'ecran
+     * MISE EN VEILLE. Appelee par la sieste quand rien ne joue et que l'ecran
      * est ailleurs depuis assez longtemps.
      *
      * On appelle UNIQUEMENT pauseTimers(), et surtout PAS onPause() :
@@ -293,8 +390,46 @@ public class MainActivity extends Activity {
         } catch (Throwable ignored) { }
     }
 
+    // -----------------------------------------------------------------
+    //  Le jeton du pont (v2.5)
+    // -----------------------------------------------------------------
+
+    private static boolean pageDuSite(String url) {
+        if (url == null) { return false; }
+        Uri u = Uri.parse(url);
+        return "https".equals(u.getScheme()) && HOTE.equals(u.getHost());
+    }
+
+    /** 128 bits de SecureRandom, en 32 caracteres hexadecimaux. */
+    private String nouveauJeton() {
+        byte[] o = new byte[16];
+        hasard.nextBytes(o);
+        StringBuilder s = new StringBuilder(32);
+        for (byte b : o) {
+            s.append(Character.forDigit((b >> 4) & 0xF, 16)).append(Character.forDigit(b & 0xF, 16));
+        }
+        return s.toString();
+    }
+
+    /** Le jeton presente est-il celui du document affiche ? (fil JavaBridge) */
+    boolean jetonValide(String jeton) {
+        String j = jetonPage;
+        return j != null && jeton != null
+                && MessageDigest.isEqual(j.getBytes(StandardCharsets.US_ASCII),
+                                         jeton.getBytes(StandardCharsets.US_ASCII));
+    }
+
+    /**
+     * Jeton, greffon et theme. Rien pour une page qui n'est pas le site. Le
+     * jeton n'est ecrit que si le document qui recoit le script est bien de
+     * l'origine du site : evaluateJavascript lance au debut d'un chargement
+     * peut encore tomber dans le document PRECEDENT.
+     */
     private void injecter(final WebView vue) {
-        try { vue.evaluateJavascript(GREFFON, null); } catch (Throwable ignored) { }
+        String j = jetonPage;
+        if (j == null) { return; }
+        String jeton = "if(location.origin==='" + SITE_URL + "')window.__snbJeton='" + j + "';";
+        try { vue.evaluateJavascript(jeton + GREFFON, null); } catch (Throwable ignored) { }
         try { vue.evaluateJavascript(GREFFON_THEME, null); } catch (Throwable ignored) { }
     }
 
@@ -344,6 +479,11 @@ public class MainActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         sContexte = getApplicationContext();
+        preferences = getSharedPreferences(PREFS, MODE_PRIVATE);
+
+        // Le fond du theme (styles.xml) suit le telephone ; celui-ci suit le
+        // theme choisi dans Sonora, s'il y en a un (v2.5).
+        getWindow().setBackgroundDrawable(new ColorDrawable(fond()));
 
         root = new FrameLayout(this);
         root.setBackgroundColor(fond());
@@ -361,14 +501,31 @@ public class MainActivity extends Activity {
 
         habillerSysteme();
 
-        Intent i = new Intent(this, KeepAliveService.class);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            startForegroundService(i);
-        } else {
-            startService(i);
-        }
+        KeepAliveService.preparer(sContexte);
+        extracteur = new ExtracteurYoutube(this);
+        fichiers = new Telechargements(this);
+        horsLigne = new EcranHorsLigne(this, root, new Runnable() {
+            @Override public void run() { recharger(); }
+        });
 
-        webView.loadUrl(adresseDepart(getIntent()));
+        // Plus de service ici (v2.5) : il nait a la premiere lecture.
+        webView.loadUrl(adresseDepart(intentNeuf(savedInstanceState)));
+    }
+
+    /**
+     * L'intent de lancement, seulement s'il est NEUF. Apres la mort du
+     * processus, Android recree l'activite avec le meme intent
+     * (savedInstanceState non nul), et une relance depuis les applications
+     * recentes le rejoue aussi (FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY) : la
+     * reprise des gouts du navigateur etait alors reproposee a chaque fois.
+     */
+    private Intent intentNeuf(Bundle etat) {
+        Intent i = getIntent();
+        if (etat != null || i == null
+                || (i.getFlags() & Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY) != 0) {
+            return null;
+        }
+        return i;
     }
 
     /**
@@ -411,6 +568,19 @@ public class MainActivity extends Activity {
         } else {
             webView.loadUrl(SITE_URL + "/app.html#/importer/" + d);
         }
+    }
+
+    /** Nouvel essai apres une erreur : l'adresse qui a echoue, sinon l'accueil. */
+    private void recharger() {
+        if (webView == null) { return; }
+        webView.loadUrl(adresseEchouee != null ? adresseEchouee : SITE_URL);
+    }
+
+    private void montrerHorsLigne(WebResourceRequest r, boolean serveur) {
+        erreurChargement = true;
+        adresseEchouee = r.getUrl().toString();
+        retirerVoile();
+        horsLigne.montrer(serveur, fond(), modeSombre());
     }
 
     /**
@@ -464,12 +634,48 @@ public class MainActivity extends Activity {
 
         webView.addJavascriptInterface(new JsBridge(this), "SonoraNative");
 
+        // Liens de telechargement ordinaires (v2.5). Sans ecouteur, la WebView
+        // les ignorait. Les blob: et data: n'existent que dans la page : elle
+        // les envoie elle-meme par fichierDebut / fichierMorceau / fichierFin.
+        webView.setDownloadListener(new DownloadListener() {
+            @Override
+            public void onDownloadStart(String url, String agent, String disposition,
+                                        String mime, long taille) {
+                if (url != null && (url.startsWith("https://") || url.startsWith("http://"))) {
+                    telechargerLien(url, agent, disposition, mime);
+                }
+            }
+        });
+
         webView.setWebViewClient(new WebViewClient() {
             @Override
             public void onPageStarted(WebView view, String url, android.graphics.Bitmap f) {
                 super.onPageStarted(view, url, f);
+                // Nouveau document, nouveau jeton : celui de la page d'avant
+                // ne vaut plus rien, et une page qui n'est pas le site n'en
+                // recoit aucun.
+                jetonPage = pageDuSite(url) ? nouveauJeton() : null;
+                erreurChargement = false;
                 injecter(view);
                 poserFond(!visible);
+            }
+
+            /**
+             * Ce qu'une WebView ne sait pas ouvrir (intent:, market:, mailto:,
+             * tel:...) part vers l'application concernee, et seulement apres
+             * un vrai toucher. Le reste se charge normalement.
+             */
+            @Override
+            public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest r) {
+                String schema = r.getUrl().getScheme();
+                if (schema == null) { return false; }
+                switch (schema) {
+                    case "http": case "https": case "about": case "data": case "blob": case "javascript":
+                        return false;
+                    default:
+                        if (r.hasGesture()) { ouvrirDehors(r.getUrl().toString()); }
+                        return true;
+                }
             }
 
             /**
@@ -481,6 +687,7 @@ public class MainActivity extends Activity {
             @Override
             public void onPageCommitVisible(WebView view, String url) {
                 super.onPageCommitVisible(view, url);
+                if (!erreurChargement) { horsLigne.cacher(); }
                 // Le site s'ouvre sur index.html qui redirige aussitot vers
                 // app.html : on ne leve le voile qu'une fois arrive.
                 if (url != null && url.contains("app.html")) { retirerVoile(); }
@@ -498,6 +705,35 @@ public class MainActivity extends Activity {
                 // suffisent a rattraper les demarrages lents.
                 injecterPlusTard(view, 1500);
                 injecterPlusTard(view, 5000);
+            }
+
+            /** Pas de reseau, nom introuvable, delai depasse... (cadre principal). */
+            @Override
+            public void onReceivedError(WebView view, WebResourceRequest r, WebResourceError e) {
+                super.onReceivedError(view, r, e);
+                if (view == webView && r.isForMainFrame()) { montrerHorsLigne(r, false); }
+            }
+
+            /** Le site repond, mais en erreur serveur : meme ecran, autre texte. */
+            @Override
+            public void onReceivedHttpError(WebView view, WebResourceRequest r,
+                                            WebResourceResponse reponse) {
+                super.onReceivedHttpError(view, r, reponse);
+                if (view == webView && r.isForMainFrame() && reponse.getStatusCode() >= 500) {
+                    montrerHorsLigne(r, true);
+                }
+            }
+
+            /** Fil reseau de la WebView : sert /__sonora_fichier/<jeton>. */
+            @Override
+            public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest r) {
+                Uri u = r.getUrl();
+                String chemin = u.getPath();
+                if (chemin == null || !chemin.startsWith(PREFIXE_FICHIER)
+                        || !"https".equals(u.getScheme()) || !HOTE.equals(u.getHost())) {
+                    return null;
+                }
+                return servirFichier(chemin.substring(PREFIXE_FICHIER.length()));
             }
 
             /**
@@ -532,8 +768,180 @@ public class MainActivity extends Activity {
         webView.setWebChromeClient(new FullscreenChromeClient());
     }
 
-    /** Le telephone est-il en mode sombre ? Lu dans la configuration Android. */
+    // -----------------------------------------------------------------
+    //  Fichiers (v2.5)
+    // -----------------------------------------------------------------
+
+    /**
+     * Rend un telechargement termine lisible par la page, a une adresse de
+     * son origine. Le jeton est impossible a deviner, et l'adresse meurt avec
+     * l'activite.
+     */
+    String exposerFichier(long telechargement, String mime) {
+        String jeton = nouveauJeton();
+        fichiersLocaux.put(jeton, new FichierLocal(telechargement, mime));
+        return PREFIXE_FICHIER + jeton;
+    }
+
+    private WebResourceResponse servirFichier(String jeton) {
+        FichierLocal f = fichiersLocaux.get(jeton);
+        if (f != null) {
+            try {
+                DownloadManager dm = (DownloadManager) getSystemService(DOWNLOAD_SERVICE);
+                ParcelFileDescriptor pfd = dm.openDownloadedFile(f.telechargement);
+                Map<String, String> entetes = new HashMap<String, String>();
+                long taille = pfd.getStatSize();
+                if (taille >= 0) { entetes.put("Content-Length", String.valueOf(taille)); }
+                entetes.put("Cache-Control", "no-store");
+                return new WebResourceResponse(f.mime, null, 200, "OK", entetes,
+                        new ParcelFileDescriptor.AutoCloseInputStream(pfd));
+            } catch (Throwable efface) {
+                // Supprime depuis l'explorateur de fichiers : simple 404.
+            }
+        }
+        // Jamais transmis a Vercel : un jeton essaye au hasard reste ici.
+        return new WebResourceResponse("text/plain", "utf-8", 404, "Not Found",
+                Collections.<String, String>emptyMap(), new ByteArrayInputStream(new byte[0]));
+    }
+
+    /**
+     * Lien de telechargement ordinaire : confie a DownloadManager, vers
+     * Telechargements/Sonora. Dans un fil a part : sur Android 7 a 9, il
+     * faut peut-etre attendre la reponse a la demande d'autorisation.
+     */
+    private void telechargerLien(final String url, final String agent,
+                                 final String disposition, final String mime) {
+        new Thread(new Runnable() {
+            @Override public void run() {
+                String message;
+                if (!attendreStockage()) {
+                    message = MESSAGE_STOCKAGE;
+                } else {
+                    String nom = Telechargements.nomPropre(
+                            URLUtil.guessFileName(url, disposition, mime), "telechargement");
+                    try {
+                        Telechargements.confier(MainActivity.this, url, nom, nom, "Sonora", mime, agent);
+                        message = "Téléchargement lancé : Téléchargements/Sonora";
+                    } catch (Throwable t) {
+                        message = "Le téléchargement n'a pas pu démarrer";
+                    }
+                }
+                final String m = message;
+                runOnUiThread(new Runnable() {
+                    @Override public void run() {
+                        Toast.makeText(MainActivity.this, m, Toast.LENGTH_SHORT).show();
+                    }
+                });
+            }
+        }, "sonora-lien").start();
+    }
+
+    /**
+     * Android 7 a 9 : ecrire dans Telechargements demande une autorisation,
+     * posee au premier enregistrement et jamais au lancement. Ne bloque pas :
+     * la reponse liberera ceux qui l'attendent (attendreStockage).
+     */
+    void demanderStockage() {
+        if (Build.VERSION.SDK_INT >= 29 || stockageAutorise()) { return; }
+        ouvrirDemande();
+    }
+
+    /**
+     * Bloquant, jusqu'a la reponse de la personne : fil du pont ou d'un
+     * telechargement, jamais le fil principal.
+     */
+    boolean attendreStockage() {
+        if (Build.VERSION.SDK_INT >= 29 || stockageAutorise()) { return true; }
+        try {
+            ouvrirDemande().await(2, TimeUnit.MINUTES);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+        return stockageAutorise();
+    }
+
+    private boolean stockageAutorise() {
+        return checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                == PackageManager.PERMISSION_GRANTED;
+    }
+
+    /** Une seule question a la fois, quel que soit le nombre de demandeurs. */
+    private synchronized CountDownLatch ouvrirDemande() {
+        if (reponseStockage == null || reponseStockage.getCount() == 0) {
+            reponseStockage = new CountDownLatch(1);
+            runOnUiThread(new Runnable() {
+                @Override public void run() {
+                    requestPermissions(new String[] { Manifest.permission.WRITE_EXTERNAL_STORAGE },
+                            CODE_STOCKAGE);
+                }
+            });
+        }
+        return reponseStockage;
+    }
+
+    private synchronized void finDeDemande() {
+        if (reponseStockage != null) { reponseStockage.countDown(); }
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int code, String[] permissions, int[] resultats) {
+        super.onRequestPermissionsResult(code, permissions, resultats);
+        if (code == CODE_STOCKAGE) { finDeDemande(); }
+    }
+
+    ExtracteurYoutube extracteur() { return extracteur; }
+
+    Telechargements fichiers() { return fichiers; }
+
+    /**
+     * Rappel de telechargement YouTube vers la page, dans le cadre principal
+     * seulement, et seulement si c'est le site : le message porte l'adresse
+     * locale du fichier.
+     */
+    void rappelerPage(JSONObject o) {
+        final String js = "if(location.origin==='" + SITE_URL + "'&&window.__sonoraTelechargement)"
+                + "window.__sonoraTelechargement(" + o + ")";
+        runOnUiThread(new Runnable() {
+            @Override public void run() {
+                WebView w = webView;
+                if (w == null || jetonPage == null) { return; }
+                try { w.evaluateJavascript(js, null); } catch (Throwable ignored) { }
+            }
+        });
+    }
+
+    /** navigator.share n'existe pas dans une WebView : le menu Android, ici. */
+    void partager(String titre, String texte, String url) {
+        String corps = texte == null ? "" : texte.trim();
+        if (url != null && url.length() > 0 && !corps.contains(url)) {
+            corps = corps.length() > 0 ? corps + "\n" + url : url;
+        }
+        Intent envoi = new Intent(Intent.ACTION_SEND);
+        envoi.setType("text/plain");
+        if (titre != null && titre.length() > 0) { envoi.putExtra(Intent.EXTRA_SUBJECT, titre); }
+        envoi.putExtra(Intent.EXTRA_TEXT, corps);
+        final Intent choix = Intent.createChooser(envoi,
+                titre != null && titre.length() > 0 ? titre : "Partager");
+        runOnUiThread(new Runnable() {
+            @Override public void run() {
+                try { startActivity(choix); } catch (Throwable ignored) { }
+            }
+        });
+    }
+
+    // -----------------------------------------------------------------
+    //  Theme
+    // -----------------------------------------------------------------
+
+    /**
+     * Sombre ou clair ? D'abord le theme choisi DANS Sonora (v2.5) : celui
+     * qui l'a mis en clair sur un telephone sombre voyait un aplat clair au
+     * lancement, puis une page noire, ou l'inverse. A defaut, le telephone.
+     */
     private boolean modeSombre() {
+        String choisi = preferences == null ? null : preferences.getString(PREF_THEME, null);
+        if ("dark".equals(choisi)) { return true; }
+        if ("light".equals(choisi)) { return false; }
         try {
             int f = getResources().getConfiguration().uiMode
                     & Configuration.UI_MODE_NIGHT_MASK;
@@ -541,6 +949,18 @@ public class MainActivity extends Activity {
         } catch (Throwable t) {
             return true;
         }
+    }
+
+    /**
+     * La page annonce son theme. Les barres suivent tout de suite ; fenetre,
+     * voile et fond le prendront au prochain lancement (il n'y a rien a
+     * voir dessous tant que la page est affichee).
+     */
+    void choisirTheme(String valeur) {
+        preferences.edit().putString(PREF_THEME, valeur).apply();
+        runOnUiThread(new Runnable() {
+            @Override public void run() { habillerSysteme(); }
+        });
     }
 
     /**
@@ -577,9 +997,11 @@ public class MainActivity extends Activity {
     }
 
     /**
-     * L'utilisateur bascule clair/sombre pendant que l'app est ouverte.
-     * Le manifeste declare uiMode dans configChanges : l'activite n'est pas
-     * recreee, c'est donc ici, et nulle part ailleurs, qu'on l'apprend.
+     * Un reglage du telephone change pendant que l'app est ouverte : mode
+     * clair/sombre, taille du texte, langue, densite, clavier... Le manifeste
+     * les declare tous dans configChanges : l'activite n'est pas recreee (la
+     * page, donc la musique, survit), c'est ici qu'on l'apprend. La WebView
+     * recoit elle-meme le changement et remet sa mise en page a jour.
      */
     @Override
     public void onConfigurationChanged(Configuration nouvelle) {
@@ -595,15 +1017,48 @@ public class MainActivity extends Activity {
         }
     }
 
-    /** Confie une adresse au navigateur du telephone. */
+    /**
+     * Confie une adresse au telephone : le navigateur pour http(s),
+     * l'application concernee pour le reste (Play Store, mail...).
+     *
+     * intent:// (v2.5) : un tel lien peut nommer N'IMPORTE QUEL composant,
+     * meme non exporte, d'une application installee, ou de Sonora elle-meme.
+     * On en retire composant et selecteur, on remet les drapeaux a zero (pas
+     * de droit d'acces accorde au passage), et on exige BROWSABLE : seules
+     * les activites faites pour etre ouvertes depuis un lien repondent.
+     */
     private void ouvrirDehors(String url) {
         if (url == null || url.length() == 0) {
             return;
         }
+        Intent i;
         try {
-            Intent i = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
-            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            if (url.startsWith("intent:")) {
+                i = Intent.parseUri(url, Intent.URI_INTENT_SCHEME);
+                i.setComponent(null);
+                i.setSelector(null);
+            } else {
+                i = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
+            }
+        } catch (Throwable mauvais) {
+            return;
+        }
+        String schema = i.getScheme();
+        if (getPackageName().equals(i.getPackage())
+                || "sonora".equals(schema) || "file".equals(schema) || "content".equals(schema)
+                || "javascript".equals(schema) || "data".equals(schema) || "about".equals(schema)) {
+            return;
+        }
+        i.addCategory(Intent.CATEGORY_BROWSABLE);
+        i.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        try {
             startActivity(i);
+        } catch (ActivityNotFoundException absent) {
+            // Application absente : la page de secours prevue par le lien.
+            String secours = i.getStringExtra("browser_fallback_url");
+            if (secours != null && (secours.startsWith("https://") || secours.startsWith("http://"))) {
+                ouvrirDehors(secours);
+            }
         } catch (Throwable ignored) { }
     }
 
@@ -613,7 +1068,7 @@ public class MainActivity extends Activity {
      * passage en arriere-plan, c'est onStop ; le retour, onStart.
      *
      * On n'appelle deliberement NI webView.onPause() NI pauseTimers() ici :
-     * la lecture en arriere-plan doit continuer. C'est le service qui decidera
+     * la lecture en arriere-plan doit continuer. C'est la sieste qui decidera
      * de la mise en veille, et seulement apres un vrai moment sans lecture
      * (voir KeepAliveService.majSieste).
      */
@@ -623,7 +1078,9 @@ public class MainActivity extends Activity {
         visible = true;
         reveiller();                       // les minuteurs repartent
         KeepAliveService.pousserPremierPlan(true);
-        assurerService();                  // il a pu s'arreter pendant l'absence
+        // Une lecture annoncee pendant l'absence attendait l'ecran pour
+        // faire naitre sa notification.
+        if (KeepAliveService.lectureEnCours()) { assurerService(); }
         if (rechargerAuRetour && webView != null) {
             rechargerAuRetour = false;
             webView.loadUrl(SITE_URL);
@@ -664,6 +1121,15 @@ public class MainActivity extends Activity {
         // Avant d'arreter le service : il ne doit plus croire qu'une page
         // l'attend (vueVivante), meme si la vue tarde a etre ramassee.
         sWeb = new WeakReference<WebView>(null);
+        jetonPage = null;
+        // La prochaine page repart d'un etat « rien ne joue » : sinon son
+        // onStart ferait renaitre une notification de lecture fantome.
+        KeepAliveService.pousserEtat(false);
+        extracteur.arreter();
+        fichiers.oublier();
+        fichiersLocaux.clear();
+        horsLigne.liberer();
+        finDeDemande();
         stopService(new Intent(this, KeepAliveService.class));
         if (webView != null) {
             root.removeView(webView);
@@ -681,53 +1147,23 @@ public class MainActivity extends Activity {
          * Une WebView n'a pas d'onglets : sans ce relais, la demande est
          * simplement abandonnee et le clic ne produit RIEN. On fabrique une
          * WebView jetable dont le seul role est d'attraper l'adresse au vol,
-         * puis on la passe au navigateur du telephone. Selon la version de
-         * WebView, l'adresse arrive par shouldOverrideUrlLoading OU par
-         * onPageStarted : on ecoute les deux, et on n'ouvre qu'une fois.
+         * puis on la passe au navigateur du telephone.
+         *
+         * v2.5 : seulement apres un vrai toucher. Sans cette regle, une
+         * publicite pouvait ouvrir Chrome toute seule, sans que personne ait
+         * touche l'ecran (setJavaScriptCanOpenWindowsAutomatically est actif).
          */
         @Override
         public boolean onCreateWindow(WebView vue, boolean estDialogue,
                                       boolean gesteUtilisateur, Message message) {
-            final WebView relais = new WebView(MainActivity.this);
-            relais.setWebViewClient(new WebViewClient() {
-                private boolean fait = false;
-
-                private void attraper(final WebView v, String url) {
-                    if (fait || url == null || url.length() == 0
-                            || url.startsWith("about:")) { return; }
-                    fait = true;
-                    ouvrirDehors(url);
-                    // Jamais detruire une WebView depuis son propre rappel.
-                    v.post(new Runnable() {
-                        @Override public void run() {
-                            try { v.stopLoading(); v.destroy(); } catch (Throwable ignored) { }
-                        }
-                    });
-                }
-
-                @Override
-                public boolean shouldOverrideUrlLoading(WebView v, String url) {
-                    attraper(v, url);
-                    return true;
-                }
-
-                @Override
-                public boolean shouldOverrideUrlLoading(WebView v, WebResourceRequest r) {
-                    attraper(v, r.getUrl() == null ? null : r.getUrl().toString());
-                    return true;
-                }
-
-                @Override
-                public void onPageStarted(WebView v, String url, android.graphics.Bitmap f) {
-                    attraper(v, url);
-                }
-            });
+            if (!gesteUtilisateur) { return false; }
+            Relais relais = new Relais();
             try {
                 WebView.WebViewTransport t = (WebView.WebViewTransport) message.obj;
-                t.setWebView(relais);
+                t.setWebView(relais.vue);
                 message.sendToTarget();
             } catch (Throwable t) {
-                try { relais.destroy(); } catch (Throwable ignored) { }
+                relais.run();
                 return false;
             }
             return true;
@@ -751,6 +1187,56 @@ public class MainActivity extends Activity {
         @Override
         public void onHideCustomView() {
             hideCustomView();
+        }
+    }
+
+    /**
+     * WebView jetable d'une fenetre demandee par la page. Selon la version de
+     * WebView, l'adresse arrive par shouldOverrideUrlLoading OU par
+     * onPageStarted : on ecoute les deux, et on n'ouvre qu'une fois. Si rien
+     * n'arrive (fenetre vide, pub qui ne mene nulle part), elle est detruite
+     * apres DELAI_RELAIS_MS. Tout se passe sur le fil principal.
+     */
+    private final class Relais extends WebViewClient implements Runnable {
+        final WebView vue = new WebView(MainActivity.this);
+        private boolean fini = false;
+
+        Relais() {
+            vue.setWebViewClient(this);
+            differe.postDelayed(this, DELAI_RELAIS_MS);
+        }
+
+        /** Delai ecoule sans adresse. */
+        @Override public void run() {
+            if (fini) { return; }
+            fini = true;
+            detruire();
+        }
+
+        private void attraper(String url) {
+            if (fini || url == null || url.length() == 0 || url.startsWith("about:")) { return; }
+            fini = true;
+            differe.removeCallbacks(this);
+            ouvrirDehors(url);
+            // Jamais detruire une WebView depuis son propre rappel.
+            vue.post(new Runnable() {
+                @Override public void run() { detruire(); }
+            });
+        }
+
+        private void detruire() {
+            try { vue.stopLoading(); vue.destroy(); } catch (Throwable ignored) { }
+        }
+
+        @Override
+        public boolean shouldOverrideUrlLoading(WebView v, WebResourceRequest r) {
+            attraper(r.getUrl() == null ? null : r.getUrl().toString());
+            return true;
+        }
+
+        @Override
+        public void onPageStarted(WebView v, String url, android.graphics.Bitmap f) {
+            attraper(url);
         }
     }
 

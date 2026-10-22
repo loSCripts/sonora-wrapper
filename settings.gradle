@@ -9,6 +9,13 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
+        // NewPipeExtractor (v2.5) n'est publie que sur JitPack. On n'y
+        // cherche QUE ses paquets : le reste ne doit jamais pouvoir venir
+        // d'un depot qui recompile n'importe quel projet GitHub a la demande.
+        maven {
+            url 'https://jitpack.io'
+            content { includeGroupByRegex 'com\\.github\\.TeamNewPipe.*' }
+        }
     }
 }
 rootProject.name = "Sonora"

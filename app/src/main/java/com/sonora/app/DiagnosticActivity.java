@@ -55,7 +55,8 @@ import java.net.URL;
  */
 public class DiagnosticActivity extends Activity {
 
-    private static final String VERSION = "2.3";
+    /** Lue dans la compilation : plus de « 2.3 » oublie dans une 2.4 (v2.5). */
+    private static final String VERSION = BuildConfig.VERSION_NAME;
     /** La meme adresse que l'application, sans deuxieme copie a tenir a jour. */
     private static final String SITE = MainActivity.SITE_URL;
 
@@ -215,7 +216,8 @@ public class DiagnosticActivity extends Activity {
         st.setJavaScriptEnabled(true);
         st.setDomStorageEnabled(true);
         sonde.addJavascriptInterface(new Pont(), "SonoraDiag");
-        sonde.addJavascriptInterface(new JsBridge(this), "SonoraNative");
+        // Les lectures seules : la sonde n'a aucune raison d'agir sur l'application.
+        sonde.addJavascriptInterface(new PontLecture(this), "SonoraNative");
         sonde.setWebViewClient(new WebViewClient() {
             @Override public void onPageFinished(WebView v, String url) {
                 StringBuilder liste = new StringBuilder("[");
@@ -266,6 +268,9 @@ public class DiagnosticActivity extends Activity {
             c.setConnectTimeout(9000);
             c.setReadTimeout(9000);
             c.setInstanceFollowRedirects(true);
+            // L'application installe un cache HTTP (pochettes, v2.5) : une
+            // reponse tiree de ce cache ne dirait rien du reseau.
+            c.setUseCaches(false);
             c.setRequestProperty("Accept", "application/json,text/plain,*/*");
             int code = c.getResponseCode();
             String type = c.getContentType();
@@ -405,6 +410,12 @@ public class DiagnosticActivity extends Activity {
             }
             r.append("\n");
         }
+
+        // ---------- 4. Ce que le pont a vu ----------
+        // Les textes de developpeur ont quitte la notification (v2.5) : ils
+        // sont ici, la ou on les cherche quand quelque chose ne va pas.
+        r.append("4. LECTURE (vue par l'application)\n");
+        r.append(KeepAliveService.resumeDiagnostic()).append("\n");
 
         r.append("Fait le ").append(new java.util.Date().toString()).append("\n");
         return r.toString();

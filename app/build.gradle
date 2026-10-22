@@ -10,21 +10,71 @@ android {
         applicationId "com.sonora.app"
         minSdk 24
         targetSdk 32
-        versionCode 24
-        versionName "2.4"
+        versionCode 25
+        versionName "2.5"
+    }
+
+    // BuildConfig.VERSION_NAME : la version affichee par Diagnostic et
+    // renvoyee a la page (versionApk) vient d'ici, plus d'une copie a la main
+    // qu'on oublie (Diagnostic affichait encore « 2.3 » en 2.4).
+    buildFeatures {
+        buildConfig true
+    }
+
+    /*
+     * LA CLE SONORA, PROTEGEE (v2.5).
+     * C'est la meme cle qu'avant (empreinte SHA-256 a4a30438...0ff5) : sans
+     * elle, Android refuse d'installer la mise a jour par-dessus. Mais elle
+     * etait rangee sous le mot de passe public d'une cle de debug ; elle est
+     * maintenant dans un fichier protege par un vrai mot de passe. Ni l'un ni
+     * l'autre ne sont dans le depot : la compilation les recoit par
+     * l'environnement (voir .github/workflows/build.yml).
+     */
+    signingConfigs {
+        release {
+            def fichier = System.getenv('SONORA_KEYSTORE_FICHIER')
+            storeFile fichier ? file(fichier) : null
+            storeType 'pkcs12'
+            storePassword System.getenv('SONORA_KEYSTORE_MDP')
+            keyAlias System.getenv('SONORA_KEY_ALIAS') ?: 'sonora'
+            // PKCS12 : un seul mot de passe pour le fichier et la cle.
+            keyPassword System.getenv('SONORA_KEYSTORE_MDP')
+        }
     }
 
     buildTypes {
         debug {
             minifyEnabled false
         }
+        release {
+            signingConfig signingConfigs.release
+            // Pas de reduction : NewPipeExtractor et Rhino s'appuient sur la
+            // reflexion, et une regle oubliee casserait l'extraction sur le
+            // telephone, la ou on ne peut pas la voir echouer.
+            minifyEnabled false
+        }
+    }
+
+    // La compilation « release » refuse targetSdk 32 : c'est une regle du
+    // Google Play Store. Sonora ne passe pas par le Play Store (l'APK est
+    // servie par le site), et monter la cible changerait les regles de
+    // notification (autorisation a demander sur Android 13) et de service de
+    // lecture (Android 14) : un chantier a part, pas un effet de bord.
+    lint {
+        disable 'ExpiredTargetSdkVersion'
     }
 
     compileOptions {
+        // NewPipeExtractor utilise java.time et d'autres API Java 8+ absentes
+        // d'Android 7 : le desucrage les fournit jusqu'a minSdk 24.
+        coreLibraryDesugaringEnabled true
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
     }
 }
 
 dependencies {
+    // Extraction YouTube sur le telephone (GPLv3 : voir LICENCES-TIERCES.md).
+    implementation 'com.github.TeamNewPipe:NewPipeExtractor:v0.26.5'
+    coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.0.4'
 }

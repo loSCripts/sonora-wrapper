@@ -15,6 +15,7 @@ import android.media.AudioManager;
 import android.media.MediaMetadata;
 import android.media.session.MediaSession;
 import android.media.session.PlaybackState;
+import android.net.http.HttpResponseCache;
 import android.net.wifi.WifiManager;
 import android.os.Build;
 import android.os.Handler;
@@ -23,13 +24,20 @@ import android.os.Looper;
 import android.os.PowerManager;
 import android.os.SystemClock;
 import android.util.Base64;
+import android.util.LruCache;
+import android.webkit.WebSettings;
 
 import java.io.ByteArrayOutputStream;
+import java.io.File;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.Set;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 
 public class KeepAliveService extends Service {
 
@@ -52,21 +60,20 @@ public class KeepAliveService extends Service {
     public static final String ACT_PREV      = "com.sonora.app.PREV";
     public static final String ACT_FWD       = "com.sonora.app.FWD";
     public static final String ACT_BACK      = "com.sonora.app.BACK";
+    /** La notification d'une pause, balayee : on s'arrete pour de bon. */
+    public static final String ACT_FERMER    = "com.sonora.app.FERMER";
 
     /**
-     * SIESTE. Sans lecture et sans ecran, ce service n'a plus rien a faire :
-     * il retire sa notification et s'arrete. C'est lui qui repondait de la
-     * ligne « consommation en arriere-plan » alors que rien ne jouait, et
-     * c'est cette consommation permanente qui faisait tuer l'application par
-     * le systeme.
+     * SIESTE. Sans lecture et sans ecran depuis ce delai, les minuteurs de la
+     * page s'arretent (c'est leur battement qui repondait de la ligne
+     * « consommation en arriere-plan » alors que rien ne jouait) et les
+     * verrous sont rendus.
      *
-     * Deux minutes de battement : assez pour reprendre depuis la notification
-     * apres une pause courte, assez court pour ne pas trainer la nuit.
-     *
-     * Rien n'est casse au passage : tant que quelque chose joue, ou tant que
-     * l'ecran est sur l'application, la sieste est annulee. Et des que la page
-     * annonce qu'elle rejoue, le pont rallume le service (voir
-     * MainActivity.assurerService).
+     * v2.5 : la sieste ne LIBERE PLUS la MediaSession. Avant, le service
+     * s'arretait : deux minutes apres une pause, le bouton lecture du casque
+     * Bluetooth et l'ecran verrouille ne relancaient plus rien. Maintenant la
+     * session reste ; la notification aussi, mais elle quitte le premier plan
+     * et peut etre balayee (ce qui, la, arrete tout).
      */
     private static final long DELAI_SIESTE = 120000L;
 
@@ -94,56 +101,103 @@ public class KeepAliveService extends Service {
     /** Sans nouvelles de la page depuis ce delai, on cesse de croire qu'elle joue. */
     private static final long SILENCE_MAX_MS = 90 * 1000L;
 
-    private static KeepAliveService instance;
-    private static boolean auPremierPlan = true;
+    // -----------------------------------------------------------------
+    //  CE QUE LA PAGE A DIT
+    //  v2.5 : le service ne nait plus qu'a la premiere lecture, alors que la
+    //  page parle des l'ouverture. Ce qu'elle dit est donc garde ici, hors
+    //  de l'instance : la notification est juste des sa naissance, sans
+    //  attendre le battement suivant. Ecrit par le pont (fil JavaBridge), lu
+    //  sur le fil principal.
+    // -----------------------------------------------------------------
+
+    private static volatile String titre = "Sonora";
+    private static volatile String artiste = "";
+    private static volatile String album = "";
+    private static volatile String moteur = "";
+    private static volatile String pochetteUrl = "";
+    private static volatile Bitmap pochette;
+    private static volatile int couleur = 0;
+    private static volatile boolean enLecture = false;
+    private static volatile long dureeMs = 0;
+    private static volatile long positionMs = 0;
+    private static volatile Set<String> actions = Collections.emptySet();
+    private static volatile long dernierSigne = 0;
+    private static volatile boolean auPremierPlan = true;
+
+    // Pour l'ecran Diagnostic : la notification ne sert plus de journal de
+    // bord (v2.5), ces informations de developpeur sont allees la-bas.
+    private static volatile String source = "";
+    private static volatile String dernierChemin = "";
+    private static volatile long pontVuA = 0;
+
+    private static volatile KeepAliveService instance;
+
+    /** Minuteurs qui valent avec ou sans service : sieste et silence. */
+    private static final Handler principal = new Handler(Looper.getMainLooper());
+
+    private static final Runnable dormir = new Runnable() {
+        @Override public void run() {
+            if (enLecture || auPremierPlan) { return; }   // la situation a change
+            MainActivity.mettreEnVeille();                // minuteurs JS a l'arret
+            KeepAliveService s = instance;
+            if (s != null) {
+                s.lacherVerrous();
+                s.quitterPremierPlan();
+            }
+        }
+    };
+
+    /** Filet : une page qui ne donne plus signe de vie ne joue plus. */
+    private static final Runnable surveillance = new Runnable() {
+        @Override public void run() {
+            if (!enLecture) { return; }
+            if (SystemClock.elapsedRealtime() - dernierSigne > SILENCE_MAX_MS) {
+                enLecture = false;
+                etatChange();
+                return;
+            }
+            principal.postDelayed(this, SILENCE_MAX_MS);
+        }
+    };
+
+    // -----------------------------------------------------------------
+    //  Pochettes : une seule a la fois, les recentes gardees en memoire
+    // -----------------------------------------------------------------
+
+    /**
+     * Un seul fil pour toutes les pochettes. Avant : un fil par adresse, et
+     * en zappant vite, dix telechargements en parallele dont un seul servait.
+     */
+    private static final ExecutorService filPochettes = Executors.newSingleThreadExecutor();
+    private static Future<?> pochetteEnCours;
+    /** 8 pochettes de 512 Ko au plus : de quoi revenir en arriere sans reseau. */
+    private static final LruCache<String, Bitmap> pochettesRecentes = new LruCache<String, Bitmap>(8);
+    /** L'identite de la WebView, pas un agent maison qu'un hebergeur refuse. */
+    private static volatile String agentWeb = "Mozilla/5.0 (Linux; Android)";
+
+    /**
+     * Appele par MainActivity au demarrage, sur le fil principal. Le cache
+     * disque des pochettes s'installe sur le fil des pochettes : pas de
+     * lecture de fichier a l'ouverture de l'application.
+     */
+    static void preparer(final Context app) {
+        try { agentWeb = WebSettings.getDefaultUserAgent(app); } catch (Throwable ignored) { }
+        filPochettes.execute(new Runnable() {
+            @Override public void run() {
+                try {
+                    if (HttpResponseCache.getInstalled() == null) {
+                        HttpResponseCache.install(new File(app.getCacheDir(), "pochettes"),
+                                8L * 1024 * 1024);
+                    }
+                } catch (Throwable ignored) { }
+            }
+        });
+    }
 
     private MediaSession session;
     private final Handler ui = new Handler(Looper.getMainLooper());
-    private final Handler sieste = new Handler(Looper.getMainLooper());
-    private final Runnable dormir = new Runnable() {
-        @Override public void run() { sEndormir(); }
-    };
-
-    /** Le service tourne-t-il ? Lu par MainActivity avant de le rallumer. */
-    public static boolean vivant() { return instance != null; }
-
-    /** Pose par MainActivity a chaque onResume / onPause. */
-    public static void pousserPremierPlan(boolean visible) {
-        auPremierPlan = visible;
-        final KeepAliveService s = instance;
-        if (s == null) { return; }
-        s.majSieste();
-    }
-
-    private void majSieste() {
-        sieste.removeCallbacks(dormir);
-        if (!enLecture && !auPremierPlan) {
-            sieste.postDelayed(dormir, DELAI_SIESTE);
-        }
-    }
-
-    private void sEndormir() {
-        if (enLecture || auPremierPlan) { return; }   // la situation a change
-        MainActivity.mettreEnVeille();                // minuteurs JS a l'arret
-        sEteindre();
-    }
-
-    private String titre = "Sonora";
-    private String artiste = "";
-    private String album = "";
-    private String moteur = "";
-    private String pochetteUrl = "";
-    private Bitmap pochette;
-    private String pochetteErreur;
-    private int couleur = 0;
-    private boolean enLecture = false;
-    private boolean pontOk = false;
-    private boolean aDesMeta = false;
-    private long dureeMs = 0;
-    private long positionMs = 0;
-    private final Set<String> actions = new HashSet<String>();
-    private String dernierChemin = null;
-    private String source = null;
+    /** Le service est-il au premier plan (notification fixe) ? */
+    private boolean enAvant = false;
 
     /** Ce que le systeme a recu en dernier : de quoi recalculer son aiguille. */
     private long publiePosition = 0;
@@ -152,9 +206,8 @@ public class KeepAliveService extends Service {
 
     private PowerManager.WakeLock verrouCpu;
     private WifiManager.WifiLock verrouWifi;
-    private long verrouPrisA = 0;
+    private volatile long verrouPrisA = 0;
     private boolean ecouteCasque = false;
-    private volatile long dernierSigne = 0;
 
     /**
      * Ecouteurs debranches ou Bluetooth coupe : Android previent juste avant
@@ -170,100 +223,89 @@ public class KeepAliveService extends Service {
         }
     };
 
-    /** Filet : une page qui ne donne plus signe de vie ne joue plus. */
-    private final Runnable surveillance = new Runnable() {
-        @Override public void run() {
-            if (!enLecture) { return; }
-            if (SystemClock.elapsedRealtime() - dernierSigne > SILENCE_MAX_MS) {
-                enLecture = false;
-                rafraichir();
-                majVerrous();
-                majSieste();
-                return;
-            }
-            sieste.postDelayed(this, SILENCE_MAX_MS);
+    /** Le service tourne-t-il ? Lu par MainActivity avant de le rallumer. */
+    public static boolean vivant() { return instance != null; }
+
+    /** La page a-t-elle annonce une lecture ? (MainActivity.onStart) */
+    public static boolean lectureEnCours() { return enLecture; }
+
+    /** Pose par MainActivity a chaque onStart / onStop. */
+    public static void pousserPremierPlan(boolean visible) {
+        auPremierPlan = visible;
+        majSieste();
+    }
+
+    /** Arme (ou desarme) la sieste ; appelable de n'importe quel fil. */
+    static void majSieste() {
+        principal.removeCallbacks(dormir);
+        if (!enLecture && !auPremierPlan) {
+            principal.postDelayed(dormir, DELAI_SIESTE);
         }
-    };
+    }
+
+    /** Lecture <-> pause. Sur le fil principal. */
+    private static void etatChange() {
+        KeepAliveService s = instance;
+        if (s != null) {
+            s.publier();
+            s.majVerrous();
+            if (enLecture) { s.revenirAuPremierPlan(); }
+        }
+        majSieste();   // la lecture reprend : plus de sieste ; elle s'arrete : on l'arme
+        principal.removeCallbacks(surveillance);
+        if (enLecture) { principal.postDelayed(surveillance, SILENCE_MAX_MS); }
+    }
+
+    private static void rafraichirSiVivant() {
+        KeepAliveService s = instance;
+        if (s != null) { s.rafraichir(); }
+    }
 
     /** Remonte quel chemin a effectivement pilote le lecteur (diagnostic). */
     public static void pousserChemin(String c) {
-        final KeepAliveService s = instance;
-        if (s == null) { return; }
-        s.dernierChemin = c;
-        s.rafraichir();
+        dernierChemin = c == null ? "" : c;
     }
 
     /** D'ou viennent l'etat et la position cote page (diagnostic). */
     public static void pousserSource(String src) {
-        final KeepAliveService s = instance;
-        if (s == null) { return; }
-        s.pontOk = true;
-        if (src != null && !src.equals(s.source)) {
-            s.source = src;
-            s.rafraichir();
-        }
+        source = src == null ? "" : src;
+    }
+
+    public static void pousserPont() {
+        pontVuA = SystemClock.elapsedRealtime();
     }
 
     /** Moteur de lecture du site : sert a nommer la plateforme. */
     public static void pousserMoteur(String m) {
-        final KeepAliveService s = instance;
-        if (s == null) { return; }
         String n = m == null ? "" : m;
-        if (!n.equals(s.moteur)) { s.moteur = n; s.rafraichir(); }
-    }
-
-    public static void pousserPont() {
-        final KeepAliveService s = instance;
-        if (s == null) { return; }
-        if (!s.pontOk) { s.pontOk = true; s.rafraichir(); }
+        if (!n.equals(moteur)) { moteur = n; rafraichirSiVivant(); }
     }
 
     public static void pousserMeta(String t, String a, String al, String url) {
-        final KeepAliveService s = instance;
-        if (s == null) { return; }
-        s.pontOk = true;
-
-        String nt = (t != null && t.length() > 0) ? t : s.titre;
+        String nt = (t != null && t.length() > 0) ? t : titre;
         String na = a == null ? "" : a;
         String nal = al == null ? "" : al;
-        boolean change = !nt.equals(s.titre) || !na.equals(s.artiste) || !nal.equals(s.album);
+        boolean change = !nt.equals(titre) || !na.equals(artiste) || !nal.equals(album);
 
-        s.titre = nt;
-        s.artiste = na;
-        s.album = nal;
-        if (t != null && t.length() > 0) { s.aDesMeta = true; }
+        titre = nt;
+        artiste = na;
+        album = nal;
 
-        if (url != null && url.length() > 0 && !url.equals(s.pochetteUrl)) {
-            s.pochetteUrl = url;
-            s.pochetteErreur = null;
-            s.chargerPochette(url);
+        String propre = pochettePropre(url);
+        if (propre != null && !propre.equals(pochetteUrl)) {
+            pochetteUrl = propre;
+            chargerPochette(propre);
         }
-        if (change) { s.rafraichir(); }
+        if (change) { rafraichirSiVivant(); }
     }
 
     public static void pousserEtat(boolean lecture) {
-        final KeepAliveService s = instance;
-        if (s == null) {
-            /* Le service dort et la page annonce qu'elle joue : on le rallume.
-               En pratique ce cas ne devrait pas arriver — la sieste ne part
-               que sans lecture ET sans ecran, et rien ne peut alors demarrer
-               tout seul. Mais si un jour quelque chose y parvient, mieux vaut
-               une notification qui revient qu'une lecture sans commandes. */
-            if (lecture) { MainActivity.assurerService(); }
-            return;
-        }
-        s.pontOk = true;
-        s.dernierSigne = SystemClock.elapsedRealtime();
-        if (s.enLecture != lecture) {
-            s.enLecture = lecture;
-            s.rafraichir();
-            s.ui.post(new Runnable() {
-                @Override public void run() {
-                    s.majVerrous();
-                    s.majSieste();   // la lecture reprend : plus de sieste ; elle s'arrete : on l'arme
-                }
-            });
-        }
+        dernierSigne = SystemClock.elapsedRealtime();
+        if (enLecture == lecture) { return; }
+        enLecture = lecture;
+        principal.post(new Runnable() {
+            @Override public void run() { etatChange(); }
+        });
     }
 
     /**
@@ -273,25 +315,54 @@ public class KeepAliveService extends Service {
      * le systeme s'est ecartee de la vraie (voir DERIVE_MAX_MS).
      */
     public static void pousserPosition(long duree, long position) {
+        dernierSigne = SystemClock.elapsedRealtime();
         final KeepAliveService s = instance;
-        if (s == null) { return; }
-        s.pontOk = true;
-        s.dernierSigne = SystemClock.elapsedRealtime();
-        if (s.enLecture
-                && s.dernierSigne - s.verrouPrisA > VERROU_RENOUVELLEMENT_MS) {
+        if (s != null && enLecture
+                && dernierSigne - s.verrouPrisA > VERROU_RENOUVELLEMENT_MS) {
             s.ui.post(new Runnable() {
                 @Override public void run() { s.majVerrous(); }
             });
         }
-        if (duree == s.dureeMs && position == s.positionMs) { return; }
-        boolean dureeChange = (duree > 0) != (s.dureeMs > 0);
-        s.dureeMs = duree;
-        s.positionMs = position;
+        if (duree == dureeMs && position == positionMs) { return; }
+        boolean dureeChange = (duree > 0) != (dureeMs > 0);
+        dureeMs = duree;
+        positionMs = position;
+        if (s == null) { return; }
         if (dureeChange) {
             s.rafraichir();          // apparition / disparition de la barre
         } else if (s.aiguilleDerive(position)) {
             s.majSessionSeule();     // saut ou tampon : on recale l'aiguille
         }
+    }
+
+    public static void pousserActions(String csv) {
+        Set<String> nouv = new HashSet<String>();
+        if (csv != null && csv.length() > 0) {
+            String[] parts = csv.split(",");
+            for (int i = 0; i < parts.length; i++) { nouv.add(parts[i].trim()); }
+        }
+        if (!nouv.equals(actions)) {
+            actions = Collections.unmodifiableSet(nouv);
+            rafraichirSiVivant();
+        }
+    }
+
+    /** Quelques lignes pour l'ecran Diagnostic : ce que le pont a vu. */
+    static String resumeDiagnostic() {
+        StringBuilder r = new StringBuilder();
+        r.append("   Service de lecture : ").append(vivant() ? "actif" : "arrete").append("\n");
+        r.append("   En lecture         : ").append(enLecture ? "oui" : "non")
+         .append("   moteur : ").append(moteur.length() > 0 ? moteur : "-").append("\n");
+        r.append("   Etat lu par        : ").append(source.length() > 0 ? source : "-").append("\n");
+        r.append("   Dernier bouton     : ").append(dernierChemin.length() > 0 ? dernierChemin : "-").append("\n");
+        r.append("   Pont               : ");
+        if (pontVuA == 0) {
+            r.append("jamais vu (page ouverte ?)");
+        } else {
+            r.append("dernier signe il y a ")
+             .append((SystemClock.elapsedRealtime() - pontVuA) / 1000).append(" s");
+        }
+        return r.append("\n").toString();
     }
 
     private boolean aiguilleDerive(long position) {
@@ -302,16 +373,22 @@ public class KeepAliveService extends Service {
 
     /** Verrous pris pendant la lecture, rendus des qu'elle s'arrete. */
     private void majVerrous() {
-        if (enLecture) {
-            try {
-                if (verrouCpu == null) {
-                    PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
-                    verrouCpu = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "sonora:lecture");
-                    verrouCpu.setReferenceCounted(false);
-                }
-                verrouCpu.acquire(VERROU_DUREE_MS);   // repousse aussi l'echeance
-                verrouPrisA = SystemClock.elapsedRealtime();
-            } catch (Throwable ignored) { }
+        if (!enLecture) {
+            lacherVerrous();
+            return;
+        }
+        try {
+            if (verrouCpu == null) {
+                PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
+                verrouCpu = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "sonora:lecture");
+                verrouCpu.setReferenceCounted(false);
+            }
+            verrouCpu.acquire(VERROU_DUREE_MS);   // repousse aussi l'echeance
+            verrouPrisA = SystemClock.elapsedRealtime();
+        } catch (Throwable ignored) { }
+        // Le verrou Wi-Fi est sans effet ecran eteint depuis Android 14, et
+        // il coute de la batterie : on ne le prend que la ou il sert.
+        if (Build.VERSION.SDK_INT <= 33) {
             try {
                 if (verrouWifi == null) {
                     WifiManager wm = (WifiManager) getApplicationContext()
@@ -322,22 +399,17 @@ public class KeepAliveService extends Service {
                 }
                 if (!verrouWifi.isHeld()) { verrouWifi.acquire(); }
             } catch (Throwable ignored) { }
-            if (!ecouteCasque) {
-                try {
-                    registerReceiver(casqueParti,
-                            new IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY));
-                    ecouteCasque = true;
-                } catch (Throwable ignored) { }
-            }
-            sieste.removeCallbacks(surveillance);
-            sieste.postDelayed(surveillance, SILENCE_MAX_MS);
-        } else {
-            lacherVerrous();
+        }
+        if (!ecouteCasque) {
+            try {
+                registerReceiver(casqueParti,
+                        new IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY));
+                ecouteCasque = true;
+            } catch (Throwable ignored) { }
         }
     }
 
     private void lacherVerrous() {
-        sieste.removeCallbacks(surveillance);
         try { if (verrouCpu != null && verrouCpu.isHeld()) { verrouCpu.release(); } }
         catch (Throwable ignored) { }
         try { if (verrouWifi != null && verrouWifi.isHeld()) { verrouWifi.release(); } }
@@ -345,22 +417,6 @@ public class KeepAliveService extends Service {
         if (ecouteCasque) {
             try { unregisterReceiver(casqueParti); } catch (Throwable ignored) { }
             ecouteCasque = false;
-        }
-    }
-
-    public static void pousserActions(String csv) {
-        final KeepAliveService s = instance;
-        if (s == null) { return; }
-        s.pontOk = true;
-        Set<String> nouv = new HashSet<String>();
-        if (csv != null && csv.length() > 0) {
-            String[] parts = csv.split(",");
-            for (int i = 0; i < parts.length; i++) { nouv.add(parts[i].trim()); }
-        }
-        if (!nouv.equals(s.actions)) {
-            s.actions.clear();
-            s.actions.addAll(nouv);
-            s.rafraichir();
         }
     }
 
@@ -408,17 +464,19 @@ public class KeepAliveService extends Service {
         majSession();
         session.setActive(true);
 
+        // Ne nait qu'a une lecture annoncee ecran allume (MainActivity) : le
+        // premier plan est permis, y compris sur Android 12 et plus.
+        enAvant = true;
         startForeground(NOTIF_ID, construire());
-        majSieste();   // rallume au bon moment : si l'ecran est deja ailleurs, on compte
+        majVerrous();
+        majSieste();
     }
 
     /**
      * START_NOT_STICKY, plus START_STICKY. Avec STICKY, quand Android tuait
      * l'application, il relancait CE service tout seul, sans activite et sans
-     * page : une notification « En attente du lecteur... » qui ne pilotait
-     * plus rien, et qui ne s'endormait jamais (auPremierPlan repart a vrai a
-     * chaque nouveau processus). C'etait une consommation en arriere-plan
-     * permanente, pour rien. Sans page, le service s'arrete.
+     * page : une notification qui ne pilotait plus rien, et qui ne
+     * s'endormait jamais. Sans page, le service s'arrete.
      */
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
@@ -438,33 +496,63 @@ public class KeepAliveService extends Service {
                 MainActivity.appelerJs("seekforward", 10);
             } else if (ACT_BACK.equals(a)) {
                 MainActivity.appelerJs("seekbackward", 10);
+            } else if (ACT_FERMER.equals(a) && !enLecture) {
+                sEteindre();
             }
         }
         return START_NOT_STICKY;
     }
 
+    /**
+     * Sieste : la notification reste (ecran verrouille, casque), mais elle
+     * n'est plus fixe et le systeme peut reprendre la memoire s'il en a
+     * besoin. stopForeground(0) la garde affichee.
+     */
+    private void quitterPremierPlan() {
+        if (!enAvant) { return; }
+        enAvant = false;
+        try { stopForeground(0); } catch (Throwable ignored) { }
+        publier();
+    }
+
+    /**
+     * La lecture reprend apres une sieste. Depuis l'arriere-plan, Android 12
+     * peut refuser le premier plan (sauf bouton de casque ou de
+     * notification) : on garde alors une notification ordinaire, la musique,
+     * elle, continue.
+     */
+    private void revenirAuPremierPlan() {
+        if (enAvant) { return; }
+        enAvant = true;
+        try {
+            startForeground(NOTIF_ID, construire());
+        } catch (Throwable refus) {
+            enAvant = false;
+            publier();
+        }
+    }
+
     private void sEteindre() {
         lacherVerrous();
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                stopForeground(Service.STOP_FOREGROUND_REMOVE);
-            } else {
-                stopForeground(true);
-            }
-        } catch (Throwable ignored) { }
+        try { stopForeground(Service.STOP_FOREGROUND_REMOVE); } catch (Throwable ignored) { }
         stopSelf();
     }
 
     @Override
     public void onDestroy() {
+        instance = null;
+        ui.removeCallbacksAndMessages(null);
         lacherVerrous();
-        sieste.removeCallbacksAndMessages(null);
         if (session != null) {
             session.setActive(false);
             session.release();
             session = null;
         }
-        instance = null;
+        // Rien ne doit survivre au service : une notification fixe orpheline
+        // ne se balaie pas.
+        try {
+            ((NotificationManager) getSystemService(NOTIFICATION_SERVICE)).cancel(NOTIF_ID);
+        } catch (Throwable ignored) { }
         super.onDestroy();
     }
 
@@ -482,15 +570,24 @@ public class KeepAliveService extends Service {
 
     private void rafraichir() {
         ui.post(new Runnable() {
-            @Override public void run() {
-                try {
-                    majSession();
-                    NotificationManager nm =
-                            (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
-                    nm.notify(NOTIF_ID, construire());
-                } catch (Throwable ignored) { }
-            }
+            @Override public void run() { publier(); }
         });
+    }
+
+    /**
+     * Session et notification a jour. Sur le fil principal, et jamais pour un
+     * service deja detruit : c'est ce notify tardif (pochette arrivee apres
+     * coup) qui laissait une notification fantome, fixe et impossible a
+     * balayer.
+     */
+    private void publier() {
+        if (instance != this) { return; }
+        try {
+            majSession();
+            NotificationManager nm =
+                    (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+            nm.notify(NOTIF_ID, construire());
+        } catch (Throwable ignored) { }
     }
 
     private void majSession() {
@@ -517,14 +614,16 @@ public class KeepAliveService extends Service {
             if (info != null) {
                 m.putString(MediaMetadata.METADATA_KEY_DISPLAY_DESCRIPTION, info);
             }
-            if (pochetteUrl != null && pochetteUrl.startsWith("http")) {
-                m.putString(MediaMetadata.METADATA_KEY_ALBUM_ART_URI, pochetteUrl);
-                m.putString(MediaMetadata.METADATA_KEY_ART_URI, pochetteUrl);
+            String u = pochetteUrl;
+            if (u.startsWith("https://")) {
+                m.putString(MediaMetadata.METADATA_KEY_ALBUM_ART_URI, u);
+                m.putString(MediaMetadata.METADATA_KEY_ART_URI, u);
             }
-            if (pochette != null) {
-                m.putBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART, pochette);
-                m.putBitmap(MediaMetadata.METADATA_KEY_ART, pochette);
-                m.putBitmap(MediaMetadata.METADATA_KEY_DISPLAY_ICON, pochette);
+            Bitmap p = pochette;
+            if (p != null) {
+                m.putBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART, p);
+                m.putBitmap(MediaMetadata.METADATA_KEY_ART, p);
+                m.putBitmap(MediaMetadata.METADATA_KEY_DISPLAY_ICON, p);
             }
             session.setMetadata(m.build());
         } catch (Throwable ignored) { }
@@ -546,14 +645,16 @@ public class KeepAliveService extends Service {
             // La vitesse 1.0 en lecture permet a Android d'extrapoler la
             // position entre deux envois : l'aiguille avance en continu et
             // les deux compteurs aux extremites de la barre suivent.
-            float vitesse = enLecture ? 1.0f : 0.0f;
+            boolean joue = enLecture;
+            long position = positionMs;
+            float vitesse = joue ? 1.0f : 0.0f;
             session.setPlaybackState(new PlaybackState.Builder()
                     .setActions(dispo)
-                    .setState(enLecture ? PlaybackState.STATE_PLAYING
-                                        : PlaybackState.STATE_PAUSED,
-                              positionMs, vitesse)
+                    .setState(joue ? PlaybackState.STATE_PLAYING
+                                   : PlaybackState.STATE_PAUSED,
+                              position, vitesse)
                     .build());
-            publiePosition = positionMs;
+            publiePosition = position;
             publieA = SystemClock.elapsedRealtime();
             publieVitesse = vitesse;
         } catch (Throwable ignored) { }
@@ -564,7 +665,7 @@ public class KeepAliveService extends Service {
         try {
             return construireMedia();
         } catch (Throwable t) {
-            return construireSimple(t.getClass().getSimpleName());
+            return construireSimple();
         }
     }
 
@@ -583,45 +684,30 @@ public class KeepAliveService extends Service {
 
     /** L'album quand il apprend quelque chose, sinon la plateforme. */
     private String infoSecondaire() {
-        if (album != null && album.length() > 0
-                && !album.equalsIgnoreCase("Sonora")
-                && !album.equalsIgnoreCase(titre)
-                && !album.equalsIgnoreCase(artiste)) {
-            return album;
+        String al = album;
+        if (al.length() > 0
+                && !al.equalsIgnoreCase("Sonora")
+                && !al.equalsIgnoreCase(titre)
+                && !al.equalsIgnoreCase(artiste)) {
+            return al;
         }
         return plateforme();
     }
 
     /** Ligne artiste, enrichie de l'album ou de la plateforme si utile. */
     private String ligneArtiste() {
-        if (!aDesMeta) {
-            return pontOk ? "Pont connecte - en attente d'une lecture"
-                          : "En attente du lecteur...";
-        }
         String a = artiste.length() > 0 ? artiste : "Sonora";
         String info = infoSecondaire();
         if (info != null && !info.equalsIgnoreCase(a)) {
-            return a + " \u2022 " + info;
+            return a + " • " + info;
         }
         return a;
     }
 
     /**
-     * Le petit texte du haut ne sert plus de journal de bord : il ne montre
-     * quelque chose que lorsqu'un etage a lache, pour ne pas manger la place
-     * d'une information utile quand tout va bien.
+     * Fixe tant que le service est au premier plan ; apres la sieste, on peut
+     * la balayer, et la balayer arrete tout (ACT_FERMER).
      */
-    private String panne() {
-        if (source != null && source.contains("?") && dureeMs > 0) {
-            return "source " + source;
-        }
-        if (pochetteErreur != null) { return "pochette " + pochetteErreur; }
-        if ("rien".equals(dernierChemin) || "pas de vue".equals(dernierChemin)) {
-            return "bouton sans effet";
-        }
-        return null;
-    }
-
     private Notification.Builder base() {
         Notification.Builder b;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -629,15 +715,17 @@ public class KeepAliveService extends Service {
         } else {
             b = new Notification.Builder(this);
         }
-        String p = panne();
-        if (p != null) { b.setSubText(p); }
-        if (couleur != 0) {
-            b.setColor(couleur);
+        int c = couleur;
+        if (c != 0) {
+            b.setColor(c);
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) { b.setColorized(true); }
         }
+        Intent fermer = new Intent(this, KeepAliveService.class).setAction(ACT_FERMER);
         b.setSmallIcon(R.drawable.ic_notif)
          .setContentIntent(ouvrirApp())
-         .setOngoing(true)
+         .setDeleteIntent(PendingIntent.getService(this, 6, fermer,
+                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE))
+         .setOngoing(enAvant)
          .setVisibility(Notification.VISIBILITY_PUBLIC)
          .setShowWhen(false);
         return b;
@@ -648,7 +736,8 @@ public class KeepAliveService extends Service {
                 .setContentTitle(titre)
                 .setContentText(ligneArtiste());
 
-        if (pochette != null) { b.setLargeIcon(pochette); }
+        Bitmap p = pochette;
+        if (p != null) { b.setLargeIcon(p); }
 
         // Les 3 boutons de base sont TOUJOURS presents : si la page n'a pas
         // declare le gestionnaire, l'appel JS passe par les primitives du site.
@@ -660,10 +749,11 @@ public class KeepAliveService extends Service {
                 enLecture ? "Pause" : "Lecture", ACT_PLAYPAUSE, 3));
         b.addAction(action(android.R.drawable.ic_media_next, "Suivant", ACT_NEXT, 5));
 
-        if (actions.contains("seekbackward")) {
+        Set<String> a = actions;
+        if (a.contains("seekbackward")) {
             b.addAction(action(android.R.drawable.ic_media_rew, "-10 s", ACT_BACK, 2));
         }
-        if (actions.contains("seekforward")) {
+        if (a.contains("seekforward")) {
             b.addAction(action(android.R.drawable.ic_media_ff, "+10 s", ACT_FWD, 4));
         }
 
@@ -676,12 +766,10 @@ public class KeepAliveService extends Service {
     }
 
     /** Repli sans MediaStyle : la v1.1 s'affichait, celle-ci s'affichera. */
-    private Notification construireSimple(String cause) {
+    private Notification construireSimple() {
         Notification.Builder b = base()
                 .setContentTitle(titre)
-                .setContentText(cause == null
-                        ? ligneArtiste()
-                        : "Mode simplifie (" + cause + ")");
+                .setContentText(ligneArtiste());
         b.addAction(action(android.R.drawable.ic_media_previous, "Precedent", ACT_PREV, 1));
         b.addAction(action(
                 enLecture ? android.R.drawable.ic_media_pause
@@ -705,53 +793,61 @@ public class KeepAliveService extends Service {
     //  Pochette
     // -----------------------------------------------------------------
 
-    private void chargerPochette(final String url) {
-        new Thread(new Runnable() {
+    /**
+     * Android refuse le http en clair (UnknownServiceException, qui
+     * s'affichait jusque dans la notification) : les favicons de radio en
+     * http passent en https, ce que la plupart des hebergeurs servent aussi.
+     * Ce qui n'est ni http(s) ni une image en data: est ignore.
+     */
+    private static String pochettePropre(String url) {
+        if (url == null || url.length() == 0) { return null; }
+        if (url.startsWith("https://") || url.startsWith("data:image/")) { return url; }
+        if (url.startsWith("http://")) { return "https://" + url.substring(7); }
+        return null;
+    }
+
+    private static synchronized void chargerPochette(final String url) {
+        Bitmap deja = pochettesRecentes.get(url);
+        if (deja != null) {
+            poserPochette(url, deja);
+            return;
+        }
+        // La piste a change : la pochette d'avant ne sert plus a rien.
+        if (pochetteEnCours != null) { pochetteEnCours.cancel(true); }
+        pochetteEnCours = filPochettes.submit(new Runnable() {
             @Override public void run() {
-                String erreur = null;
                 Bitmap bmp = null;
                 try {
                     byte[] octets = url.startsWith("data:")
                             ? decoderDataUrl(url)
                             : telecharger(url);
-                    if (octets == null || octets.length == 0) {
-                        erreur = "vide";
-                    } else {
+                    if (octets != null && octets.length > 0) {
                         bmp = decoderEtReduire(octets);
-                        if (bmp == null) { erreur = "illisible"; }
                     }
-                } catch (Throwable t) {
-                    erreur = etiquette(t);
+                } catch (Throwable ignored) {
+                    // Une pochette qui manque n'est pas une erreur a montrer.
                 }
-                if (!url.equals(pochetteUrl)) { return; }   // piste deja changee
-                if (bmp != null) {
-                    pochette = bmp;
-                    couleur = couleurDominante(bmp);
-                    pochetteErreur = null;
-                } else {
-                    couleur = 0;
-                    pochetteErreur = erreur;
-                }
-                rafraichir();
+                if (bmp != null) { pochettesRecentes.put(url, bmp); }
+                poserPochette(url, bmp);
             }
-        }).start();
+        });
     }
 
-    private static String etiquette(Throwable t) {
-        String m = t.getMessage();
-        if (m != null && m.length() > 0 && m.length() < 40) { return m; }
-        return t.getClass().getSimpleName();
+    private static void poserPochette(String url, Bitmap bmp) {
+        if (!url.equals(pochetteUrl)) { return; }   // piste deja changee
+        pochette = bmp;
+        couleur = bmp != null ? couleurDominante(bmp) : 0;
+        rafraichirSiVivant();
     }
 
-    /** Certains hebergeurs refusent une requete sans navigateur declare. */
-    private byte[] telecharger(String url) throws Exception {
+    private static byte[] telecharger(String url) throws Exception {
         HttpURLConnection co = null;
         try {
             co = (HttpURLConnection) new URL(url).openConnection();
             co.setConnectTimeout(8000);
             co.setReadTimeout(8000);
             co.setInstanceFollowRedirects(true);
-            co.setRequestProperty("User-Agent", "Mozilla/5.0 (Android) SonoraAPK");
+            co.setRequestProperty("User-Agent", agentWeb);
             co.setRequestProperty("Accept", "image/*,*/*");
             int code = co.getResponseCode();
             if (code >= 400) { throw new Exception(String.valueOf(code)); }
