@@ -8,18 +8,27 @@ import android.net.Uri;
 import org.json.JSONException;
 import org.json.JSONObject;
 
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.OutputStream;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.regex.Pattern;
 
 /**
- * TELECHARGER UN TITRE YOUTUBE, DEPUIS LE TELEPHONE (v2.5).
+ * TELECHARGER UN TITRE YOUTUBE, DEPUIS LE TELEPHONE (v2.5, revu en v2.6).
  *
  * Demande explicite du proprietaire, qui en assume le risque juridique.
  * Jusqu'ici, le site passait par un serveur (sonora-ytdl) que YouTube
  * reconnait comme un robot et bloque. Ici, tout part du telephone : la
- * lecture de la page YouTube (PasserelleNewPipe) comme le telechargement
- * (DownloadManager), avec l'adresse IP de la personne, comme si elle
- * regardait la video dans son navigateur.
+ * lecture de la page YouTube (PasserelleNewPipe) comme le telechargement,
+ * avec l'adresse IP de la personne, comme si elle regardait la video dans
+ * son navigateur.
+ *
+ * v2.6 : le fichier est telecharge PAR L'APPLICATION (TelechargeurDirect,
+ * par tranches, meme processus que l'extraction), puis range dans
+ * Telechargements/Sonora. Un refus de YouTube : nouvelle extraction (adresse
+ * fraiche) et un second essai. DownloadManager ne sert plus qu'en dernier
+ * recours.
  *
  * Un seul telechargement a la fois (la page recoit "occupe" sinon). La page
  * suit l'avancement par window.__sonoraTelechargement({etat, recu, total,
@@ -33,6 +42,9 @@ final class ExtracteurYoutube {
 
     /** Rythme du suivi : assez vif pour une barre qui avance, sans plus. */
     private static final long SUIVI_MS = 800;
+
+    /** Les fichiers telecharges restent la pour la copie hors ligne de la page, un jour au plus. */
+    private static final long GARDE_MS = 24L * 3600 * 1000;
 
     private static final String REFUS_YOUTUBE =
             "YouTube a refusé le téléchargement : réessaie plus tard ou mets à jour l'application";
@@ -101,13 +113,52 @@ final class ExtracteurYoutube {
             rappel("echec", 0, 0, "Aucun format téléchargeable pour cette vidéo", "", "", "");
             return;
         }
-        String fichier = nom + "." + flux.extension;
         if (Thread.currentThread().isInterrupted()) { return; }
         if (!activite.attendreStockage()) {
-            rappel("echec", 0, 0, MainActivity.MESSAGE_STOCKAGE, fichier, flux.mime, "");
+            rappel("echec", 0, 0, MainActivity.MESSAGE_STOCKAGE, nom + "." + flux.extension, flux.mime, "");
             return;
         }
 
+        // 1. Dans l'application, par tranches. Un refus : adresse fraiche, une fois.
+        File dossier = dossierTemporaire();
+        for (int essai = 0; essai < 2 && dossier != null; essai++) {
+            final String fichier = nom + "." + flux.extension;
+            final String mime = flux.mime;
+            File temp = new File(dossier, video + (audio ? "-son." : "-video.") + flux.extension);
+            try {
+                try (OutputStream sortie = new FileOutputStream(temp)) {
+                    TelechargeurDirect.telecharger(flux.url, flux.agent, sortie, suivi(fichier, mime));
+                }
+                String nomFinal = Telechargements.publier(activite, temp, fichier, mime);
+                rappel("fini", temp.length(), temp.length(), "Enregistré dans Téléchargements/Sonora",
+                        nomFinal, mime, activite.exposerFichierLocal(temp, mime));
+                return;
+            } catch (TelechargeurDirect.Annule arret) {
+                //noinspection ResultOfMethodCallIgnored
+                temp.delete();
+                return;
+            } catch (TelechargeurDirect.Refus refus) {
+                //noinspection ResultOfMethodCallIgnored
+                temp.delete();
+                if (essai > 0) { break; }
+                rappel("progres", 0, 0, "YouTube a refusé, nouvel essai…", fichier, mime, "");
+                try {
+                    PasserelleNewPipe.Flux frais = PasserelleNewPipe.trouver(video, audio);
+                    if (frais == null) { break; }
+                    flux = frais;
+                } catch (Throwable t) {
+                    break;
+                }
+            } catch (Throwable t) {
+                //noinspection ResultOfMethodCallIgnored
+                temp.delete();
+                break;
+            }
+        }
+        if (Thread.currentThread().isInterrupted()) { return; }
+
+        // 2. Dernier recours : DownloadManager, comme en 2.5.
+        String fichier = nom + "." + flux.extension;
         long id;
         try {
             id = Telechargements.confier(activite, flux.url, fichier,
@@ -119,6 +170,41 @@ final class ExtracteurYoutube {
             return;
         }
         suivre(id, fichier, flux.mime);
+    }
+
+    /** La barre de la page avance, sans l'inonder : quatre nouvelles par seconde au plus. */
+    private TelechargeurDirect.Suivi suivi(final String fichier, final String mime) {
+        return new TelechargeurDirect.Suivi() {
+            private long dernier = 0;
+            @Override public void progres(long recu, long total) {
+                long maintenant = System.currentTimeMillis();
+                if (maintenant - dernier < 250 && (total <= 0 || recu < total)) { return; }
+                dernier = maintenant;
+                rappel("progres", recu, Math.max(0, total), "Téléchargement…", fichier, mime, "");
+            }
+            @Override public boolean annule() {
+                return Thread.currentThread().isInterrupted();
+            }
+        };
+    }
+
+    /**
+     * cache/youtube : la ou le fichier se construit, et d'ou la page en tire
+     * sa copie hors ligne. Ce qui a plus d'un jour est efface au passage
+     * (Android vide aussi ce dossier de lui-meme quand la place manque).
+     */
+    private File dossierTemporaire() {
+        File d = new File(activite.getCacheDir(), "youtube");
+        if (!d.isDirectory() && !d.mkdirs()) { return null; }
+        File[] vieux = d.listFiles();
+        long limite = System.currentTimeMillis() - GARDE_MS;
+        if (vieux != null) {
+            for (File f : vieux) {
+                //noinspection ResultOfMethodCallIgnored
+                if (f.lastModified() < limite) { f.delete(); }
+            }
+        }
+        return d;
     }
 
     private void suivre(long id, String fichier, String mime) {

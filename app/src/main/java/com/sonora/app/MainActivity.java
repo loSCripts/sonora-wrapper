@@ -41,6 +41,8 @@ import android.widget.Toast;
 import org.json.JSONObject;
 
 import java.io.ByteArrayInputStream;
+import java.io.File;
+import java.io.FileInputStream;
 import java.lang.ref.WeakReference;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -262,10 +264,13 @@ public class MainActivity extends Activity {
 
     private static final class FichierLocal {
         final long telechargement;
+        /** v2.6 : fichier telecharge par l'application elle-meme (sinon null). */
+        final File fichier;
         final String mime;
 
-        FichierLocal(long telechargement, String mime) {
+        FichierLocal(long telechargement, File fichier, String mime) {
             this.telechargement = telechargement;
+            this.fichier = fichier;
             this.mime = mime;
         }
     }
@@ -799,7 +804,14 @@ public class MainActivity extends Activity {
      */
     String exposerFichier(long telechargement, String mime) {
         String jeton = nouveauJeton();
-        fichiersLocaux.put(jeton, new FichierLocal(telechargement, mime));
+        fichiersLocaux.put(jeton, new FichierLocal(telechargement, null, mime));
+        return PREFIXE_FICHIER + jeton;
+    }
+
+    /** Meme chose pour un fichier telecharge dans l'application (v2.6). */
+    String exposerFichierLocal(File fichier, String mime) {
+        String jeton = nouveauJeton();
+        fichiersLocaux.put(jeton, new FichierLocal(-1, fichier, mime));
         return PREFIXE_FICHIER + jeton;
     }
 
@@ -807,6 +819,13 @@ public class MainActivity extends Activity {
         FichierLocal f = fichiersLocaux.get(jeton);
         if (f != null) {
             try {
+                if (f.fichier != null) {
+                    Map<String, String> entetes = new HashMap<String, String>();
+                    entetes.put("Content-Length", String.valueOf(f.fichier.length()));
+                    entetes.put("Cache-Control", "no-store");
+                    return new WebResourceResponse(f.mime, null, 200, "OK", entetes,
+                            new FileInputStream(f.fichier));
+                }
                 DownloadManager dm = (DownloadManager) getSystemService(DOWNLOAD_SERVICE);
                 ParcelFileDescriptor pfd = dm.openDownloadedFile(f.telechargement);
                 Map<String, String> entetes = new HashMap<String, String>();

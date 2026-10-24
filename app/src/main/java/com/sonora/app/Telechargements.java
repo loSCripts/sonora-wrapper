@@ -123,9 +123,7 @@ final class Telechargements {
         try {
             e.sortie.close();
             if (!activite.attendreStockage()) { return "erreur:permission"; }
-            return "ok:" + (Build.VERSION.SDK_INT >= 29
-                    ? publierMediaStore(e)
-                    : publierDossier(e));
+            return "ok:" + publier(activite, e.temp, e.nom, e.mime);
         } catch (Throwable t) {
             return "erreur:ecriture";
         } finally {
@@ -148,21 +146,32 @@ final class Telechargements {
     }
 
     /**
+     * Range un fichier complet dans Telechargements/Sonora et rend le nom
+     * retenu. Sert aux envois de la page et aux telechargements YouTube
+     * faits dans l'application (v2.6). Le fichier source n'est pas touche.
+     */
+    static String publier(Context c, File source, String nom, String mime) throws IOException {
+        return Build.VERSION.SDK_INT >= 29
+                ? publierMediaStore(c, source, nom, mime)
+                : publierDossier(c, source, nom, mime);
+    }
+
+    /**
      * Android 10 et plus : MediaStore, sans autorisation. IS_PENDING cache le
      * fichier tant qu'il n'est pas complet ; MediaStore renomme lui-meme un
      * homonyme (« titre (1).mp3 »), on relit donc le nom qu'il a retenu.
      */
     @TargetApi(29)
-    private String publierMediaStore(Envoi e) throws IOException {
-        ContentResolver cr = activite.getContentResolver();
+    private static String publierMediaStore(Context ctx, File source, String nom, String mime) throws IOException {
+        ContentResolver cr = ctx.getContentResolver();
         ContentValues v = new ContentValues();
-        v.put(MediaStore.MediaColumns.DISPLAY_NAME, e.nom);
-        v.put(MediaStore.MediaColumns.MIME_TYPE, e.mime);
+        v.put(MediaStore.MediaColumns.DISPLAY_NAME, nom);
+        v.put(MediaStore.MediaColumns.MIME_TYPE, mime);
         v.put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/" + DOSSIER);
         v.put(MediaStore.MediaColumns.IS_PENDING, 1);
         Uri u = cr.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, v);
         if (u == null) { throw new IOException("MediaStore refuse"); }
-        try (InputStream in = new FileInputStream(e.temp);
+        try (InputStream in = new FileInputStream(source);
              OutputStream out = cr.openOutputStream(u)) {
             if (out == null) { throw new IOException("MediaStore sans flux"); }
             copier(in, out);
@@ -177,21 +186,21 @@ final class Telechargements {
                 null, null, null)) {
             if (c != null && c.moveToFirst() && c.getString(0) != null) { return c.getString(0); }
         }
-        return e.nom;
+        return nom;
     }
 
     /** Android 7 a 9 : le dossier public, avec l'autorisation deja obtenue. */
-    private String publierDossier(Envoi e) throws IOException {
+    private static String publierDossier(Context ctx, File source, String nom, String mime) throws IOException {
         File dossier = dossierPublic();
-        File cible = nomLibre(dossier, e.nom);
-        try (InputStream in = new FileInputStream(e.temp);
+        File cible = nomLibre(dossier, nom);
+        try (InputStream in = new FileInputStream(source);
              OutputStream out = new FileOutputStream(cible)) {
             copier(in, out);
         }
         // Sans ca, le fichier n'apparait ni dans la galerie ni dans les
         // lecteurs avant le prochain redemarrage.
-        MediaScannerConnection.scanFile(activite, new String[] { cible.getPath() },
-                new String[] { e.mime }, null);
+        MediaScannerConnection.scanFile(ctx, new String[] { cible.getPath() },
+                new String[] { mime }, null);
         return cible.getName();
     }
 
