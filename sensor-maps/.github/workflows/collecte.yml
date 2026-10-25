@@ -2,9 +2,11 @@ name: Collecte et publication
 
 on:
   schedule:
-    # Toutes les 10 minutes, décalé de 7 minutes : GitHub est très chargé à l'heure pile.
+    # Collecte toutes les 10 minutes, en évitant l'heure pile où GitHub est très chargé.
     # Chaque source a son propre rythme (séismes 10 min, météo 30 min, air 1 h, débit 1 semaine).
     - cron: '7,17,27,37,47,57 * * * *'
+    # Maintien chaque lundi à 3 h 23 (UTC) : voir la tâche « maintien » tout en bas.
+    - cron: '23 3 * * 1'
   workflow_dispatch:
     inputs:
       forcer:
@@ -30,6 +32,7 @@ concurrency:
 
 jobs:
   collecte:
+    if: github.event.schedule != '23 3 * * 1'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment:
@@ -94,3 +97,30 @@ jobs:
         if: steps.verif.outputs.pret == 'oui'
         id: publication
         uses: actions/deploy-pages@v4
+
+  # GitHub coupe les tâches planifiées d'un dépôt public après 60 jours sans activité.
+  # Chaque lundi, si le dernier commit date de plus de 45 jours, on écrit la date du jour
+  # dans un petit fichier : une ligne, aucune donnée.
+  maintien:
+    if: github.event.schedule == '23 3 * * 1'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Récupérer le code
+        uses: actions/checkout@v4
+
+      - name: Garder la collecte planifiée active
+        run: |
+          age=$(( ( $(date +%s) - $(git log -1 --format=%ct) ) / 86400 ))
+          echo "Dernier commit il y a $age jours."
+          if [ "$age" -lt 45 ]; then
+            echo "Rien à faire."
+            exit 0
+          fi
+          date -u +%Y-%m-%d > .github/derniere-activite.txt
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .github/derniere-activite.txt
+          git commit -m "Maintien de la collecte planifiée"
+          git push

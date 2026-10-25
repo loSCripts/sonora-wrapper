@@ -10,9 +10,8 @@ La carte : https://loscripts.github.io/sensor-maps/
 
 - `web/` : la carte (`carte.html`), la page « Sources et licences » (`sources.html`), et `index.html` qui ouvre la carte.
 - `collector/` : le programme de collecte en Python. Un fichier par source dans `collector/sources/`, et des tests dans `collector/tests/`.
-- `.github/workflows/` : les trois tâches automatiques de GitHub.
-  - `collecte.yml` : la collecte et la publication, toutes les 10 minutes.
-  - `maintien.yml` : chaque lundi, évite que GitHub coupe la collecte (voir plus bas).
+- `.github/workflows/` : les deux tâches automatiques de GitHub.
+  - `collecte.yml` : la collecte et la publication, toutes les 10 minutes. Chaque lundi, elle évite aussi que GitHub coupe la collecte (voir plus bas).
   - `verifier.yml` : relance les tests à chaque modification du code.
 
 ## Les sources
@@ -95,7 +94,8 @@ Si le site lui-même ne répond pas au début du passage, rien n'est publié cet
 - **La carte dit « Mesures indisponibles »** : le premier passage n'a pas encore eu lieu. Refais l'étape 2 de la mise en route.
 - **Une source est « En panne »** sur la page « Sources et licences » : le message d'erreur y est affiché. C'est souvent passager ; la carte garde les dernières données.
 - **GitHub t'envoie un e-mail « Run failed »** : ouvre https://github.com/loSCripts/sensor-maps/actions, touche le passage en rouge, puis l'étape en rouge pour lire l'erreur.
-- **GitHub a coupé la collecte** (il le fait après 60 jours sans activité sur un dépôt public) : la tâche « Maintien » l'évite en écrivant une date dans `.github/derniere-activite.txt` toutes les 6 semaines environ. Si ça arrive quand même, ouvre la page de l'étape 2 de la mise en route et appuie sur **Enable workflow**.
+- **GitHub a coupé la collecte** (il le fait après 60 jours sans activité sur un dépôt public) : la partie « maintien » de la tâche de collecte l'évite en écrivant une date dans `.github/derniere-activite.txt` toutes les 6 semaines environ. Si ça arrive quand même, ouvre la page de l'étape 2 de la mise en route et appuie sur **Enable workflow**.
+- **La collecte ne repasse plus toute seule** (sur la page « Sources et licences », la « dernière réussie » n'avance plus) : ouvre https://github.com/loSCripts/sensor-maps/edit/main/.github/workflows/collecte.yml. Dans la ligne `- cron: '7,17,27,37,47,57 * * * *'`, change les minutes (par exemple `8,18,28,38,48,58`). Appuie sur **Commit changes...**, laisse « Commit directly to the main branch », puis appuie sur **Commit changes**. D'après la documentation de GitHub, un changement de l'horaire fait par un utilisateur du dépôt réactive la tâche planifiée.
 - **Modifier la carte** : sur github.com, ouvre `web/carte.html`, touche le crayon, modifie (le bloc « CONFIGURATION » en haut du script est fait pour ça), puis **Commit changes**. Le site se republie tout seul.
 
 ## Choix faits par défaut
