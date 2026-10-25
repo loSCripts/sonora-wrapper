@@ -189,6 +189,6 @@ python -m http.server 8000 --directory _site
 
 Testé avec de vrais appels : EMSC, USGS, aéroports (METAR), Sensor.Community, LCSQA et ARCEP, puis la carte dans un navigateur de téléphone simulé. Météo-France est testé sur GitHub avec la vraie clé.
 
-Pas encore testé : OpenAQ (il faut une clé).
+Pas encore testé : OpenAQ (il faut une clé), et la tâche « maintien » (elle ne se lance que si le dépôt reste 45 jours sans commit).
 
-Le minuteur de GitHub n'a jamais lancé la collecte sur ce dépôt (cause inconnue), d'où cron-job.org (étape 4 de la mise en route). La ligne à importer a été essayée avec le code d'import de cron-job.org lui-même : il la lit correctement. L'appel complet vers GitHub ne peut être testé qu'avec ton jeton.
+Le minuteur de GitHub n'a jamais lancé la collecte sur ce dépôt (cause inconnue), d'où cron-job.org (étape 4 de la mise en route). Testé pour de vrai : le lancement de 17 h 40 (heure de Paris) envoyé par cron-job.org est arrivé sur GitHub, et la collecte a réussi (séismes, Météo-France et aéroports mis à jour).
