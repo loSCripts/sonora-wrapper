@@ -56,16 +56,22 @@ Ensuite, tout est automatique : la collecte repasse toute seule toutes les 10 mi
 
 Sans cette clé, la pression et la température viennent seulement des aéroports et des capteurs citoyens. Avec elle, on ajoute plus de 2 000 stations officielles en France.
 
-1. Ouvre https://portail-api.meteofrance.fr et crée un compte gratuit.
-2. Dans le catalogue, choisis l'API **« Package Observations »** et abonne-toi.
-3. Dans **« Mes API »**, génère une **clé d'API** (« API Key »). Si on te demande une durée, prends la plus longue proposée. Copie la clé.
-4. Ouvre https://github.com/loSCripts/sensor-maps/settings/secrets/actions/new
-5. Dans « Name », écris `METEOFRANCE_API_KEY`. Dans « Secret », colle la clé. Appuie sur **Add secret**. La clé reste secrète : elle n'apparaît jamais sur le site.
-6. Relance un passage (étape 2 de la mise en route).
+Les noms ci-dessous sont ceux affichés par le portail (relevés dans son code le 25 octobre 2026).
 
-Non vérifié : les noms exacts des boutons du portail et la durée maximale d'une clé. Si la clé expire, la page « Sources et licences » affiche « clé refusée » : il suffit d'en générer une nouvelle et de remplacer le secret.
+1. Ouvre https://portail-api.meteofrance.fr, crée un compte gratuit, puis appuie sur **Se connecter**.
+2. Ouvre directement la page de l'API : https://portail-api.meteofrance.fr/web/fr/api/DonneesPubliquesPaquetObservation
+   Son nom affiché est **Package Observations**. Attention : ce n'est pas « Données d'observation », qui est une autre API.
+3. Appuie sur **Souscrire à l'API gratuitement**.
+4. Sur la page « Félicitations, vous êtes désormais abonné.e à l'API », appuie sur **Générer token**.
+   Si tu as quitté cette page : ouvre le menu **Mes API**, puis appuie sur **Générer Token** sur la ligne de Package Observations.
+5. Dans **Type de token**, choisis **API Key**. Ne prends pas « OAuth2 » : ce jeton ne dure qu'une heure.
+6. Dans le champ **Durée** (il est écrit « Durée de validité désirée (en seconde) »), tape `94672800`. C'est le maximum accepté par le portail, soit environ 3 ans.
+7. Appuie sur **Générer token**. Si une case « c'est bien noté » apparaît, coche-la. La clé s'affiche sous **Votre token** : copie-la tout de suite, le portail ne la montrera plus jamais.
+8. Ouvre https://github.com/loSCripts/sensor-maps/settings/secrets/actions/new
+9. Dans « Name », écris `METEOFRANCE_API_KEY`. Dans « Secret », colle la clé. Appuie sur **Add secret**. La clé reste secrète : elle n'apparaît jamais sur le site.
+10. Relance un passage (étape 2 de la mise en route).
 
-Autre possibilité : au lieu de la clé, mets « l'identifiant d'application » (la longue valeur après `Authorization: Basic` dans l'exemple `curl` du portail) dans un secret nommé `METEOFRANCE_APPLICATION_ID`. Le programme demande alors lui-même un jeton à chaque passage, et rien n'expire.
+Dans environ 3 ans, la clé expirera : la page « Sources et licences » affichera alors « clé refusée ». Il suffira d'en générer une nouvelle (étapes 4 à 7) et de remplacer le secret.
 
 ## Ajouter la clé OpenAQ (facultative)
 
