@@ -2,9 +2,9 @@ name: Collecte et publication
 
 on:
   schedule:
-    # Toutes les 10 minutes, décalé de 4 minutes : GitHub est très chargé à l'heure pile.
+    # Toutes les 10 minutes, décalé de 7 minutes : GitHub est très chargé à l'heure pile.
     # Chaque source a son propre rythme (séismes 10 min, météo 30 min, air 1 h, débit 1 semaine).
-    - cron: '4,14,24,34,44,54 * * * *'
+    - cron: '7,17,27,37,47,57 * * * *'
   workflow_dispatch:
     inputs:
       forcer:
