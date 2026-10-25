@@ -106,20 +106,20 @@ class TestReprise(unittest.TestCase):
         from collector.etat import restaurer_depuis_site
         http = FauxHttp({'manifest.json': FausseReponse(b'', 404)})
         with tempfile.TemporaryDirectory() as d:
-            self.assertEqual(restaurer_depuis_site(http, 'https://moi.github.io/atlas/', d, 1), {})
+            self.assertEqual(restaurer_depuis_site(http, 'https://moi.github.io/sensor-maps/', d, 1), {})
 
     def test_site_injoignable_on_ne_publie_rien(self):
         from collector.etat import EtatIntrouvable, restaurer_depuis_site
         http = FauxHttp({})
         with tempfile.TemporaryDirectory() as d, self.assertRaises(EtatIntrouvable):
-            restaurer_depuis_site(http, 'https://moi.github.io/atlas/', d, 1)
+            restaurer_depuis_site(http, 'https://moi.github.io/sensor-maps/', d, 1)
 
     def test_reprise_des_fichiers(self):
         from collector.etat import restaurer_depuis_site
         manifeste = {'sources': {'emsc': {'fichiers': ['emsc.json']}}}
         http = FauxHttp({'manifest.json': FausseReponse(json.dumps(manifeste)), 'emsc.json': FausseReponse(b'{"ok":1}')})
         with tempfile.TemporaryDirectory() as d:
-            restaurer_depuis_site(http, 'https://moi.github.io/atlas/', d, 1)
+            restaurer_depuis_site(http, 'https://moi.github.io/sensor-maps/', d, 1)
             self.assertEqual(json.loads((Path(d) / 'emsc.json').read_text()), {'ok': 1})
 
 

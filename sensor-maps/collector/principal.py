@@ -1,7 +1,7 @@
 """Programme principal : relit l'état publié, lance les sources dont c'est l'heure, écrit le manifeste.
 
 Utilisation (GitHub Actions le fait tout seul) :
-    python -m collector --site https://moi.github.io/atlas-capteurs/ --sortie _site
+    python -m collector --site https://loscripts.github.io/sensor-maps/ --sortie _site
 """
 import argparse
 import os
@@ -130,9 +130,9 @@ def executer(args, env):
     data = sortie / 'data'
     data.mkdir(exist_ok=True)
 
-    depot = env.get('GITHUB_REPOSITORY') or 'atlas-capteurs'
+    depot = env.get('GITHUB_REPOSITORY') or 'loSCripts/sensor-maps'
     contact = (env.get('CONTACT') or '').strip() or 'https://github.com/' + depot
-    http = outils.Http('AtlasDesCapteurs/1.0 (+https://github.com/%s; contact: %s)' % (depot, contact))
+    http = outils.Http('SensorMaps/1.0 (+https://github.com/%s; contact: %s)' % (depot, contact))
 
     if args.etat_local:
         precedent = restaurer_depuis_dossier(args.etat_local, data)
@@ -157,7 +157,7 @@ def executer(args, env):
 
 
 def main(argv=None):
-    p = argparse.ArgumentParser(prog='python -m collector', description='Collecte des données publiques de l\'Atlas des capteurs.')
+    p = argparse.ArgumentParser(prog='python -m collector', description='Collecte des données publiques de Sensor Maps.')
     p.add_argument('--site', help='adresse du site déjà publié, pour reprendre ses données')
     p.add_argument('--etat-local', help='dossier data/ d\'un passage précédent (essais hors GitHub)')
     p.add_argument('--sortie', default='_site', help='dossier du site à publier (par défaut : _site)')
