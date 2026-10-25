@@ -82,6 +82,8 @@ Les noms ci-dessous sont ceux du site en français (relevés dans son code le 25
 7. Appuie sur **Import**. Le site remplit tout seul l'adresse, l'horaire (toutes les 10 minutes), la méthode, les en-têtes et le corps de la demande.
 8. Tout en bas, appuie sur **Créer**. La case **Activer tâche** est déjà cochée.
 
+Si tu as importé la ligne sans y mettre ton jeton : onglet **Avancé**, partie **En-têtes**, trouve la ligne dont la **Clé** est `Authorization`. Dans sa **Valeur**, remplace `COLLE_TON_JETON_ICI` par ton jeton (il doit rester `Bearer`, un espace, puis le jeton). Touche une zone vide de la page pour fermer le clavier : le site n'enregistre la case qu'à ce moment-là. Puis appuie sur **Créer**.
+
 Pour vérifier : ouvre https://github.com/loSCripts/sensor-maps/actions/workflows/collecte.yml. Un nouveau passage doit apparaître toutes les 10 minutes environ.
 
 ## Ajouter la clé Météo-France (gratuite, recommandée)
@@ -128,7 +130,7 @@ Si le site lui-même ne répond pas au début du passage, rien n'est publié cet
 - **Une source est « En panne »** sur la page « Sources et licences » : le message d'erreur y est affiché. C'est souvent passager ; la carte garde les dernières données.
 - **GitHub t'envoie un e-mail « Run failed »** : ouvre https://github.com/loSCripts/sensor-maps/actions, touche le passage en rouge, puis l'étape en rouge pour lire l'erreur.
 - **GitHub a coupé la collecte** (il le fait après 60 jours sans activité sur un dépôt public, et une tâche coupée ne se lance plus du tout, même par cron-job.org) : la partie « maintien » de la tâche de collecte l'évite. Quand le dernier commit date de 45 jours ou plus, elle écrit la date du jour dans `.github/derniere-activite.txt`. Si ça arrive quand même, ouvre la page de l'étape 2 de la mise en route et appuie sur **Enable workflow**.
-- **La collecte ne repasse plus toute seule** (sur la page « Sources et licences », la « dernière réussie » n'avance plus) : connecte-toi sur https://console.cron-job.org, touche la tâche Sensor Maps, puis le menu **Actions** et **Historique des exécutions**. Une erreur 401 veut dire que le jeton GitHub ne marche plus : crée-en un nouveau (étape 4 a de la mise en route). Puis, dans la tâche, onglet **Avancé**, partie **En-têtes personnalisés**, remplace la **Valeur** de `Authorization` par `Bearer ` suivi du nouveau jeton, et appuie sur **Sauvegarder**.
+- **La collecte ne repasse plus toute seule** (sur la page « Sources et licences », la « dernière réussie » n'avance plus) : connecte-toi sur https://console.cron-job.org, touche la tâche Sensor Maps, puis le menu **Actions** et **Historique des exécutions**. Une erreur 401 veut dire que le jeton GitHub ne marche plus : crée-en un nouveau (étape 4 a de la mise en route). Puis, dans la tâche, onglet **Avancé**, partie **En-têtes**, remplace la **Valeur** de `Authorization` par `Bearer ` suivi du nouveau jeton. Touche une zone vide de la page pour fermer le clavier, puis appuie sur **Sauvegarder**.
 - **Modifier la carte** : sur github.com, ouvre `web/carte.html`, touche le crayon, modifie (le bloc « CONFIGURATION » en haut du script est fait pour ça), puis **Commit changes**. Le site se republie tout seul.
 
 ## Choix faits par défaut
