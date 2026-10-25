@@ -4,7 +4,7 @@ on:
   schedule:
     # Collecte toutes les 10 minutes, en évitant l'heure pile où GitHub est très chargé.
     # Chaque source a son propre rythme (séismes 10 min, météo 30 min, air 1 h, débit 1 semaine).
-    - cron: '7,17,27,37,47,57 * * * *'
+    - cron: '8,18,28,38,48,58 * * * *'
     # Maintien chaque lundi à 3 h 23 (UTC) : voir la tâche « maintien » tout en bas.
     - cron: '23 3 * * 1'
   workflow_dispatch:
