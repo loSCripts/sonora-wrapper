@@ -11,7 +11,7 @@ La carte : https://loscripts.github.io/sensor-maps/
 - `web/` : la carte (`carte.html`), la page « Sources et licences » (`sources.html`), et `index.html` qui ouvre la carte.
 - `collector/` : le programme de collecte en Python. Un fichier par source dans `collector/sources/`, et des tests dans `collector/tests/`.
 - `.github/workflows/` : les deux tâches automatiques de GitHub.
-  - `collecte.yml` : la collecte et la publication, toutes les 10 minutes. Chaque lundi, elle évite aussi que GitHub coupe la collecte (voir plus bas).
+  - `collecte.yml` : la collecte et la publication, toutes les 10 minutes. Elle évite aussi que GitHub coupe la collecte (voir plus bas).
   - `verifier.yml` : relance les tests à chaque modification du code.
 
 ## Les sources
@@ -31,7 +31,7 @@ Toutes ces licences permettent un usage commercial : une page de liens de soutie
 
 ## Mise en route
 
-Le code est déjà dans ce dépôt. Tout se fait depuis le navigateur du téléphone, sur github.com.
+Le code est déjà dans ce dépôt. Tout se fait depuis le navigateur du téléphone.
 
 ### 1. Activer GitHub Pages
 
@@ -49,7 +49,40 @@ Appuie sur **Run workflow**, coche « Interroger toutes les sources tout de suit
 
 https://loscripts.github.io/sensor-maps/
 
-Ensuite, tout est automatique : la collecte repasse toute seule toutes les 10 minutes.
+### 4. Faire repasser la collecte toutes les 10 minutes
+
+La tâche de collecte contient un minuteur GitHub. Mais sur ce dépôt, le 25 octobre 2026, GitHub ne l'a jamais déclenché, sans donner de raison (la tâche est pourtant « active »). Le service gratuit cron-job.org le remplace : toutes les 10 minutes, il demande à GitHub de lancer la collecte, comme si tu appuyais sur **Run workflow**. Si un jour le minuteur de GitHub marche aussi, ce n'est pas grave : chaque source n'est interrogée que quand c'est son heure.
+
+**a. Créer un jeton GitHub** (un mot de passe limité, réservé à cette tâche)
+
+1. Ouvre ce lien : le nom, la durée et le droit sont déjà remplis.
+   https://github.com/settings/personal-access-tokens/new?name=sensor-maps-cron&description=Lancer+la+collecte+de+sensor-maps&target_name=loSCripts&expires_in=none&actions=write
+2. Dans « Repository access », choisis **Only select repositories**, puis dans la liste **Selected repositories**, choisis **sensor-maps**.
+3. Dans « Permissions », vérifie que **Actions** est sur **Read and write**.
+4. Appuie sur **Generate token**. Si une fenêtre de résumé s'ouvre, appuie encore sur **Generate token**.
+5. Copie le jeton affiché (il commence par `github_pat_`) : GitHub ne le montre qu'une seule fois.
+
+Ce jeton sert seulement à gérer les passages de collecte de sensor-maps : il ne peut ni modifier le code, ni lire les clés. Tu peux le supprimer quand tu veux sur https://github.com/settings/personal-access-tokens
+
+**b. Créer la tâche sur cron-job.org**
+
+Les noms ci-dessous sont ceux du site en français (relevés dans son code le 25 octobre 2026).
+
+1. Ouvre https://console.cron-job.org/signup, remplis le formulaire et appuie sur **Créer un compte**. Valide l'e-mail reçu, puis connecte-toi avec **Se connecter**.
+2. Sur le **Tableau de bord**, appuie sur **Créer un cronjob**.
+3. Dans **Titre**, écris `Sensor Maps`.
+4. Tout en bas de la page, appuie sur **Import from cURL** (ce bouton reste en anglais).
+5. Dans la case « Command or crontab line », colle cette ligne :
+
+```
+*/10 * * * * curl -X POST -H "Accept: application/vnd.github+json" -H "Authorization: Bearer COLLE_TON_JETON_ICI" -H "X-GitHub-Api-Version: 2022-11-28" -H "Content-Type: application/json" -d '{"ref":"main"}' https://api.github.com/repos/loSCripts/sensor-maps/actions/workflows/collecte.yml/dispatches
+```
+
+6. Dans la case, appuie longtemps sur `COLLE_TON_JETON_ICI` pour le sélectionner, puis choisis **Coller** : ton jeton prend sa place. Garde le mot `Bearer` et l'espace juste avant.
+7. Appuie sur **Import**. Le site remplit tout seul l'adresse, l'horaire (toutes les 10 minutes), la méthode, les en-têtes et le corps de la demande.
+8. Tout en bas, appuie sur **Créer**. La case **Activer tâche** est déjà cochée.
+
+Pour vérifier : ouvre https://github.com/loSCripts/sensor-maps/actions/workflows/collecte.yml. Un nouveau passage doit apparaître toutes les 10 minutes environ.
 
 ## Ajouter la clé Météo-France (gratuite, recommandée)
 
@@ -94,8 +127,8 @@ Si le site lui-même ne répond pas au début du passage, rien n'est publié cet
 - **La carte dit « Mesures indisponibles »** : le premier passage n'a pas encore eu lieu. Refais l'étape 2 de la mise en route.
 - **Une source est « En panne »** sur la page « Sources et licences » : le message d'erreur y est affiché. C'est souvent passager ; la carte garde les dernières données.
 - **GitHub t'envoie un e-mail « Run failed »** : ouvre https://github.com/loSCripts/sensor-maps/actions, touche le passage en rouge, puis l'étape en rouge pour lire l'erreur.
-- **GitHub a coupé la collecte** (il le fait après 60 jours sans activité sur un dépôt public) : la partie « maintien » de la tâche de collecte l'évite en écrivant une date dans `.github/derniere-activite.txt` toutes les 6 semaines environ. Si ça arrive quand même, ouvre la page de l'étape 2 de la mise en route et appuie sur **Enable workflow**.
-- **La collecte ne repasse plus toute seule** (sur la page « Sources et licences », la « dernière réussie » n'avance plus) : ouvre https://github.com/loSCripts/sensor-maps/edit/main/.github/workflows/collecte.yml. Dans la ligne `- cron: '7,17,27,37,47,57 * * * *'`, change les minutes (par exemple `8,18,28,38,48,58`). Appuie sur **Commit changes...**, laisse « Commit directly to the main branch », puis appuie sur **Commit changes**. D'après la documentation de GitHub, un changement de l'horaire fait par un utilisateur du dépôt réactive la tâche planifiée.
+- **GitHub a coupé la collecte** (il le fait après 60 jours sans activité sur un dépôt public, et une tâche coupée ne se lance plus du tout, même par cron-job.org) : la partie « maintien » de la tâche de collecte l'évite. Quand le dernier commit date de 45 jours ou plus, elle écrit la date du jour dans `.github/derniere-activite.txt`. Si ça arrive quand même, ouvre la page de l'étape 2 de la mise en route et appuie sur **Enable workflow**.
+- **La collecte ne repasse plus toute seule** (sur la page « Sources et licences », la « dernière réussie » n'avance plus) : connecte-toi sur https://console.cron-job.org, touche la tâche Sensor Maps, puis le menu **Actions** et **Historique des exécutions**. Une erreur 401 veut dire que le jeton GitHub ne marche plus : crée-en un nouveau (étape 4 a de la mise en route). Puis, dans la tâche, onglet **Avancé**, partie **En-têtes personnalisés**, remplace la **Valeur** de `Authorization` par `Bearer ` suivi du nouveau jeton, et appuie sur **Sauvegarder**.
 - **Modifier la carte** : sur github.com, ouvre `web/carte.html`, touche le crayon, modifie (le bloc « CONFIGURATION » en haut du script est fait pour ça), puis **Commit changes**. Le site se republie tout seul.
 
 ## Choix faits par défaut
@@ -152,6 +185,8 @@ python -m http.server 8000 --directory _site
 
 ## État au 25 octobre 2026
 
-Testé avec de vrais appels : EMSC, USGS, aéroports (METAR), Sensor.Community, LCSQA et ARCEP, puis la carte dans un navigateur de téléphone simulé.
+Testé avec de vrais appels : EMSC, USGS, aéroports (METAR), Sensor.Community, LCSQA et ARCEP, puis la carte dans un navigateur de téléphone simulé. Météo-France est testé sur GitHub avec la vraie clé.
 
-Pas encore testé : Météo-France et OpenAQ (il faut une clé). Le journal du premier passage sur GitHub Actions dira si tout va bien.
+Pas encore testé : OpenAQ (il faut une clé).
+
+Le minuteur de GitHub n'a jamais lancé la collecte sur ce dépôt (cause inconnue), d'où cron-job.org (étape 4 de la mise en route). La ligne à importer a été essayée avec le code d'import de cron-job.org lui-même : il la lit correctement. L'appel complet vers GitHub ne peut être testé qu'avec ton jeton.

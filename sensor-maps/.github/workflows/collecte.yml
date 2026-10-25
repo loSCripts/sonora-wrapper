@@ -38,6 +38,8 @@ jobs:
     environment:
       name: github-pages
       url: ${{ steps.publication.outputs.page_url }}
+    outputs:
+      maintien: ${{ steps.age.outputs.maintien }}
     steps:
       # Tant que GitHub Pages n'est pas activé (Source : GitHub Actions), on s'arrête poliment
       - name: Vérifier que GitHub Pages est activé
@@ -56,6 +58,17 @@ jobs:
       - name: Récupérer le code
         if: steps.verif.outputs.pret == 'oui'
         uses: actions/checkout@v4
+
+      # Si le dernier commit date de 45 jours ou plus, la tâche « maintien » tout en bas prend le relais
+      - name: Regarder l'âge du dernier commit
+        if: steps.verif.outputs.pret == 'oui'
+        id: age
+        run: |
+          age=$(( ( $(date +%s) - $(git log -1 --format=%ct) ) / 86400 ))
+          echo "Dernier commit il y a $age jours."
+          if [ "$age" -ge 45 ]; then
+            echo "maintien=oui" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Installer Python
         if: steps.verif.outputs.pret == 'oui'
@@ -98,19 +111,24 @@ jobs:
         id: publication
         uses: actions/deploy-pages@v4
 
-  # GitHub coupe les tâches planifiées d'un dépôt public après 60 jours sans activité.
-  # Chaque lundi, si le dernier commit date de plus de 45 jours, on écrit la date du jour
-  # dans un petit fichier : une ligne, aucune donnée.
+  # GitHub coupe les tâches planifiées d'un dépôt public après 60 jours sans activité,
+  # et une tâche coupée ne se lance plus du tout, même à la demande (donc plus par cron-job.org).
+  # Si le dernier commit date de 45 jours ou plus (vu par la collecte, ou chaque lundi),
+  # on écrit la date du jour dans un petit fichier : une ligne, aucune donnée.
   maintien:
-    if: github.event.schedule == '23 3 * * 1'
+    needs: collecte
+    if: ${{ !cancelled() && (github.event.schedule == '23 3 * * 1' || needs.collecte.outputs.maintien == 'oui') }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
+      # Toujours la dernière version de main, même si un autre passage vient d'écrire la date
       - name: Récupérer le code
         uses: actions/checkout@v4
+        with:
+          ref: main
 
-      - name: Garder la collecte planifiée active
+      - name: Garder la collecte active
         run: |
           age=$(( ( $(date +%s) - $(git log -1 --format=%ct) ) / 86400 ))
           echo "Dernier commit il y a $age jours."
