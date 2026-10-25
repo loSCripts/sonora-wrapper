@@ -1,0 +1,33 @@
+name: Vérifier le code
+
+on:
+  push:
+    paths:
+      - 'collector/**'
+      - 'web/**'
+      - 'README.md'
+      - '.github/workflows/**'
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Récupérer le code
+        uses: actions/checkout@v4
+
+      - name: Installer Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Installer les dépendances
+        run: pip install -r collector/requirements.txt
+
+      # Les tests rejouent des réponses enregistrées : aucun appel réseau, aucun quota consommé
+      - name: Lancer les tests
+        run: python -m unittest discover -s collector/tests -t . -v

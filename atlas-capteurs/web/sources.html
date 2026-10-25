@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#f4f5f7" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0f1318" media="(prefers-color-scheme: dark)">
+<meta name="description" content="D'où viennent les données de l'Atlas des capteurs, leur licence et leur état.">
+<title>Sources et licences, Atlas des capteurs</title>
+<style>
+:root{
+  --papier:#f4f5f7; --surface:#ffffff; --trait:#dcdfe5; --encre:#0f1720; --encre2:#586270; --focus:#0b57d0;
+  --ok:#1e7d3a; --retard:#9a6200; --panne:#b3261e; --attente:#586270;
+}
+@media (prefers-color-scheme:dark){
+  :root{ --papier:#0f1318; --surface:#171c22; --trait:#2b323b; --encre:#eef1f5; --encre2:#9aa5b3; --focus:#8ab4ff;
+    --ok:#7dd99a; --retard:#f2c46b; --panne:#ffb4ab; --attente:#9aa5b3; }
+}
+*{box-sizing:border-box}
+body{margin:0;font:15px/1.55 system-ui,-apple-system,"Segoe UI",Roboto,"Noto Sans",sans-serif;background:var(--papier);color:var(--encre)}
+a{color:var(--focus)}
+:focus-visible{outline:3px solid var(--focus);outline-offset:2px}
+h1,h2,h3,p,ul{margin:0}
+ul{padding:0;list-style:none}
+.haut{position:sticky;top:0;z-index:5;display:flex;align-items:center;gap:6px;height:52px;padding:0 8px;background:var(--papier);border-bottom:1px solid var(--trait)}
+.retour{display:inline-flex;align-items:center;justify-content:center;width:44px;height:44px;border-radius:22px;color:inherit}
+.retour svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.haut h1{font-size:17px;font-weight:700;letter-spacing:-.01em}
+main{max-width:720px;margin:0 auto;padding:16px 16px calc(32px + env(safe-area-inset-bottom))}
+.intro{color:var(--encre2)}
+h2{margin:28px 0 10px;font-size:16px;font-weight:700}
+.cartes{display:grid;gap:10px}
+.src{padding:14px;border:1px solid var(--trait);border-radius:12px;background:var(--surface)}
+.src-tete{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
+.src h3{font-size:15px;font-weight:700;line-height:1.35}
+.etat{flex:none;padding:2px 8px;border-radius:10px;border:1px solid currentColor;font-size:12px;font-weight:700;white-space:nowrap}
+.etat.ok{color:var(--ok)} .etat.retard{color:var(--retard)} .etat.panne{color:var(--panne)} .etat.attente{color:var(--attente)}
+.desc{margin-top:6px}
+.meta{display:grid;gap:2px;margin-top:8px;font-size:13px;color:var(--encre2)}
+.meta b{color:var(--encre);font-weight:600}
+.msg{margin-top:6px;font-size:13px;color:var(--panne)}
+.liste li{padding:10px 0;border-top:1px solid var(--trait)}
+.liste li:first-child{border-top:0}
+.liste b{display:block}
+.liste span{display:block;font-size:14px;color:var(--encre2)}
+p + p{margin-top:8px}
+</style>
+</head>
+<body>
+<header class="haut">
+  <a class="retour" href="carte.html" aria-label="Retour à la carte"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg></a>
+  <h1>Sources et licences</h1>
+</header>
+
+<main>
+  <p class="intro">Toutes les mesures de la carte viennent de services publics ou de réseaux ouverts. Rien n'est inventé : là où personne ne mesure, la carte reste vide.</p>
+
+  <h2>Sources utilisées</h2>
+  <div class="cartes" id="sources"><p class="intro">Chargement…</p></div>
+
+  <h2>Sources écartées</h2>
+  <ul class="liste">
+    <li><b>Ookla (Speedtest)</b><span>Licence non commerciale. Cela vaut aussi pour les mesures Ookla republiées par l'ARCEP.</span></li>
+    <li><b>Open-Meteo, offre gratuite</b><span>Réservée à un usage non commercial.</span></li>
+    <li><b>M-Lab</b><span>Statistiques publiques arrêtées en 2024, le reste demande un compte Google Cloud, et le mobile n'y est pas séparé du fixe.</span></li>
+    <li><b>INTERMAGNET (champ magnétique)</b><span>Licence non commerciale.</span></li>
+    <li><b>NoiseCapture (bruit)</b><span>Données de 2017 à 2020 : pas assez récentes.</span></li>
+  </ul>
+  <p class="intro" style="margin-top:8px">Ces choix gardent possible un financement du projet plus tard. Si le projet reste sans revenu, certaines de ces sources pourront être ajoutées.</p>
+
+  <h2>Fond de carte</h2>
+  <p>© contributeurs <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>, données sous licence ODbL. Carte affichée avec <a href="https://leafletjs.com" target="_blank" rel="noopener">Leaflet</a>.</p>
+
+  <h2>Vie privée</h2>
+  <p>La page demande ta position pour placer le point sur la carte. Elle reste dans ton téléphone : rien n'est envoyé.</p>
+  <p>Aucun cookie, aucun traceur, aucune publicité. Comme pour tout site, les serveurs qui fournissent la carte de fond et la bibliothèque Leaflet voient ton adresse IP.</p>
+
+  <h2>Réutiliser les données</h2>
+  <p>Les fichiers publiés sont dans le dossier <a href="data/manifest.json">data/</a>. Chacun garde la licence de sa source, indiquée plus haut.</p>
+</main>
+
+<script>
+(function () {
+'use strict';
+const NBSP = String.fromCharCode(160);
+const $ = (id) => document.getElementById(id);
+const COUCHES = { seismes: 'Séismes', pression: 'Pression', temperature: 'Température', air: 'Air', debit: 'Débit mobile', bruit: 'Bruit' };
+function echapper(t) {
+  return String(t == null ? '' : t).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+function duree(s) {
+  if (s < 3600) return Math.max(1, Math.round(s / 60)) + NBSP + 'min';
+  if (s < 172800) return Math.round(s / 3600) + NBSP + 'h';
+  return Math.round(s / 86400) + NBSP + 'jours';
+}
+function rythme(min) {
+  if (min < 60) return 'toutes les ' + min + NBSP + 'min';
+  if (min === 60) return 'toutes les heures';
+  if (min < 1440) return 'toutes les ' + Math.round(min / 60) + NBSP + 'h';
+  if (min === 10080) return 'chaque semaine';
+  return 'tous les ' + Math.round(min / 1440) + ' jours';
+}
+function badge(s) {
+  const age = s.derniere_reussite ? Date.now() / 1000 - Date.parse(s.derniere_reussite) / 1000 : null;
+  if (s.etat === 'inactif') return ['attente', 'En attente d\'une clé'];
+  if (s.etat === 'jamais' || (age === null && s.etat !== 'erreur')) return ['attente', 'Pas encore lancée'];
+  if (s.etat === 'erreur') return ['panne', 'En panne'];
+  if (age > (s.perime_apres_min || 60) * 60) return ['retard', 'En retard'];
+  return ['ok', 'À jour'];
+}
+function carte(id, s) {
+  const b = badge(s), age = s.derniere_reussite ? Date.now() / 1000 - Date.parse(s.derniere_reussite) / 1000 : null;
+  const couches = (s.couches || []).map((c) => COUCHES[c] || c).join(', ');
+  const licence = s.licence && s.licence.url ? '<a href="' + echapper(s.licence.url) + '" target="_blank" rel="noopener">' + echapper(s.licence.nom) + '</a>' : echapper((s.licence || {}).nom);
+  return '<article class="src"><div class="src-tete"><h3><a href="' + echapper(s.site) + '" target="_blank" rel="noopener">' + echapper(s.nom) + '</a></h3>' +
+    '<span class="etat ' + b[0] + '">' + b[1] + '</span></div>' +
+    '<p class="desc">' + echapper(s.description) + '</p>' +
+    '<div class="meta"><span><b>Couches :</b> ' + echapper(couches) + '</span>' +
+    '<span><b>Licence :</b> ' + licence + (s.licence && s.licence.commercial ? ', usage commercial permis' : '') + '</span>' +
+    '<span><b>À citer :</b> ' + echapper(s.attribution) + '</span>' +
+    '<span><b>Collecte :</b> ' + rythme(s.intervalle_min) + (age !== null ? ', dernière réussie il y a ' + duree(age) : '') + '</span>' +
+    (s.periode ? '<span><b>Période :</b> ' + echapper(s.periode) + '</span>' : '') +
+    (s.nb ? '<span><b>Mesures :</b> ' + Number(s.nb).toLocaleString('fr-FR') + '</span>' : '') + '</div>' +
+    (s.etat === 'erreur' && s.message ? '<p class="msg">Dernière erreur : ' + echapper(s.message) + (age !== null ? '. Les dernières données sont gardées.' : '') + '</p>' : '') +
+    (s.etat === 'inactif' && s.message ? '<p class="msg">' + echapper(s.message) + '</p>' : '') +
+    '</article>';
+}
+fetch('data/manifest.json?t=' + Date.now(), { cache: 'no-store' })
+  .then((r) => { if (!r.ok) throw new Error(r.status); return r.json(); })
+  .then((m) => { $('sources').innerHTML = Object.keys(m.sources).map((id) => carte(id, m.sources[id])).join(''); })
+  .catch(() => { $('sources').innerHTML = '<p class="intro">État des sources indisponible pour le moment. Le premier passage du programme de collecte ne s\'est peut-être pas encore fait.</p>'; });
+})();
+</script>
+</body>
+</html>

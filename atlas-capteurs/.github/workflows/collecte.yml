@@ -1,0 +1,96 @@
+name: Collecte et publication
+
+on:
+  schedule:
+    # Toutes les 10 minutes, décalé de 4 minutes : GitHub est très chargé à l'heure pile.
+    # Chaque source a son propre rythme (séismes 10 min, météo 30 min, air 1 h, débit 1 semaine).
+    - cron: '4,14,24,34,44,54 * * * *'
+  workflow_dispatch:
+    inputs:
+      forcer:
+        description: "Interroger toutes les sources tout de suite"
+        type: boolean
+        default: false
+  push:
+    branches: [main]
+    paths:
+      - 'web/**'
+      - 'collector/**'
+      - '.github/workflows/collecte.yml'
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Un seul passage à la fois : jamais deux publications qui se marchent dessus
+concurrency:
+  group: collecte
+  cancel-in-progress: false
+
+jobs:
+  collecte:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment:
+      name: github-pages
+      url: ${{ steps.publication.outputs.page_url }}
+    steps:
+      # Tant que GitHub Pages n'est pas activé (Source : GitHub Actions), on s'arrête poliment
+      - name: Vérifier que GitHub Pages est activé
+        id: verif
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          type=$(gh api "repos/${{ github.repository }}/pages" --jq .build_type 2>/dev/null || true)
+          if [ "$type" = "workflow" ]; then
+            echo "pret=oui" >> "$GITHUB_OUTPUT"
+          else
+            echo "pret=non" >> "$GITHUB_OUTPUT"
+            echo "::warning::GitHub Pages n'est pas encore activé avec la source « GitHub Actions ». Suis l'étape « Activer GitHub Pages » du README, puis relance."
+          fi
+
+      - name: Récupérer le code
+        if: steps.verif.outputs.pret == 'oui'
+        uses: actions/checkout@v4
+
+      - name: Installer Python
+        if: steps.verif.outputs.pret == 'oui'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: collector/requirements.txt
+
+      - name: Installer les dépendances
+        if: steps.verif.outputs.pret == 'oui'
+        run: pip install -r collector/requirements.txt
+
+      - name: Préparer GitHub Pages
+        if: steps.verif.outputs.pret == 'oui'
+        id: pages
+        uses: actions/configure-pages@v5
+
+      # Relit le site déjà publié, interroge les sources dont c'est l'heure, écrit _site/.
+      # Si le site ne répond pas, ce pas s'arrête et rien n'est publié : le site garde sa version.
+      - name: Collecter les données
+        if: steps.verif.outputs.pret == 'oui'
+        env:
+          METEOFRANCE_API_KEY: ${{ secrets.METEOFRANCE_API_KEY }}
+          METEOFRANCE_APPLICATION_ID: ${{ secrets.METEOFRANCE_APPLICATION_ID }}
+          OPENAQ_API_KEY: ${{ secrets.OPENAQ_API_KEY }}
+          CONTACT: ${{ vars.CONTACT }}
+          FORCER: ${{ github.event.inputs.forcer }}
+        run: python -m collector --site "${{ steps.pages.outputs.base_url }}" --sortie _site
+
+      - name: Empaqueter le site
+        if: steps.verif.outputs.pret == 'oui'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+          retention-days: 1
+
+      - name: Publier sur GitHub Pages
+        if: steps.verif.outputs.pret == 'oui'
+        id: publication
+        uses: actions/deploy-pages@v4

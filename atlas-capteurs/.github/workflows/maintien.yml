@@ -1,0 +1,34 @@
+name: Maintien de la collecte
+
+# GitHub coupe les tâches planifiées d'un dépôt public après 60 jours sans activité.
+# Chaque lundi, si le dernier commit date de plus de 45 jours, on écrit la date du jour
+# dans un petit fichier : une ligne, aucune donnée.
+on:
+  schedule:
+    - cron: '17 3 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  maintien:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Récupérer le code
+        uses: actions/checkout@v4
+
+      - name: Garder la collecte planifiée active
+        run: |
+          age=$(( ( $(date +%s) - $(git log -1 --format=%ct) ) / 86400 ))
+          echo "Dernier commit il y a $age jours."
+          if [ "$age" -lt 45 ]; then
+            echo "Rien à faire."
+            exit 0
+          fi
+          date -u +%Y-%m-%d > .github/derniere-activite.txt
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .github/derniere-activite.txt
+          git commit -m "Maintien de la collecte planifiée"
+          git push
