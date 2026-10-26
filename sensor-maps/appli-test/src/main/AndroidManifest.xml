@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Savoir quand le téléphone devient immobile (Android 10 et plus) -->
+    <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION" />
+    <!-- La même chose avant Android 10, par les services Google -->
+    <uses-permission
+        android:name="com.google.android.gms.permission.ACTIVITY_RECOGNITION"
+        android:maxSdkVersion="28" />
+    <!-- Le court service de mesure, et sa notification -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Garder le processeur éveillé pendant les 10 secondes d'une mesure -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- Relancer la détection d'immobilité après un redémarrage du téléphone -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+
+    <application
+        android:allowBackup="false"
+        android:icon="@mipmap/ic_appli"
+        android:label="@string/nom_appli"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.Test">
+
+        <activity
+            android:name=".EcranPrincipal"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- Service court (Android 14 et plus : 3 minutes au maximum, la mesure dure 10 secondes) -->
+        <service
+            android:name=".ServiceMesure"
+            android:exported="false"
+            android:foregroundServiceType="shortService" />
+
+        <receiver
+            android:name=".RecepteurImmobile"
+            android:exported="false" />
+
+        <receiver
+            android:name=".RecepteurDemarrage"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+    </application>
+</manifest>

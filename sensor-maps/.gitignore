@@ -2,3 +2,7 @@ _site/
 __pycache__/
 *.pyc
 .venv/
+appli-test/build/
+appli-test/.gradle/
+appli-test/.kotlin/
+appli-test/local.properties

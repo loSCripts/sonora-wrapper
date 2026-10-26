@@ -10,9 +10,11 @@ La carte : https://loscripts.github.io/sensor-maps/
 
 - `web/` : la carte (`carte.html`), la page « Sources et licences » (`sources.html`), et `index.html` qui ouvre la carte.
 - `collector/` : le programme de collecte en Python. Un fichier par source dans `collector/sources/`, et des tests dans `collector/tests/`.
-- `.github/workflows/` : les deux tâches automatiques de GitHub.
+- `appli-test/` : l'appli Android du test décisif, le début de l'étape 2 (voir « Appli de test » plus bas).
+- `.github/workflows/` : les trois tâches automatiques de GitHub.
   - `collecte.yml` : la collecte et la publication, toutes les 10 minutes. Elle évite aussi que GitHub coupe la collecte (voir plus bas).
   - `verifier.yml` : relance les tests à chaque modification du code.
+  - `appli-test.yml` : fabrique l'appli de test, l'essaie sur un téléphone virtuel, puis la publie sur la page « Releases ».
 
 ## Les sources
 
@@ -124,6 +126,29 @@ Sensor.Community demande qu'on indique un moyen de contact dans les requêtes. P
 
 Si le site lui-même ne répond pas au début du passage, rien n'est publié cette fois-ci : le site garde sa version précédente.
 
+## Appli de test (début de l'étape 2)
+
+Avant de construire la vraie appli de mesure, ce petit test vérifie sur **ton** téléphone ce qu'Android laisse faire quand l'écran est éteint. L'appli essaie de lire la **pression** (baromètre) et le **champ magnétique** (magnétomètre) pendant 10 secondes, de deux façons :
+
+1. **Réveil toutes les 15 minutes** : Android réveille l'appli, sans notification. C'est le plus court intervalle qu'Android accepte.
+2. **Après immobilité** : quand le téléphone devient immobile (Android le détecte), l'appli lance un court service avec une notification « Mesure en cours » pendant 10 secondes. Si Android refuse ce service, elle essaie de mesurer directement.
+
+Chaque essai est noté dans un journal : l'heure, l'écran allumé ou éteint, la batterie, et combien de mesures sont arrivées. Rien n'est envoyé nulle part : le journal reste sur le téléphone tant que tu ne le copies pas.
+
+**Installer** (comme pour Sonora) : ouvre https://github.com/loSCripts/sensor-maps/releases/latest/download/sensor-maps-test.apk sur le téléphone. Le téléchargement démarre. Ouvre le fichier, autorise l'installation depuis ton navigateur si Android le demande, puis appuie sur **Installer**.
+
+**Faire le test** :
+
+1. Ouvre l'appli **Test Sensor Maps**. La partie « Capteurs du téléphone » dit si ton téléphone a un baromètre.
+2. Appuie sur **Démarrer le test**, puis sur **Autoriser** pour l'activité physique et pour les notifications.
+3. Appuie sur **Mesurer maintenant (10 secondes)** : la pression et le champ magnétique doivent apparaître dans le journal.
+4. Utilise ton téléphone normalement, puis laisse-le la nuit, comme d'habitude. Si tu peux, laisse-le aussi au moins 2 heures débranché, écran éteint et posé : c'est là qu'Android est le plus strict.
+5. Le lendemain, ouvre l'appli, appuie sur **Copier le journal**, puis colle-le dans la conversation avec Claude.
+
+**Arrêter** : **Arrêter le test**, puis désinstalle l'appli si tu veux.
+
+Chaque modification du dossier `appli-test/` fabrique une nouvelle version : la tâche `appli-test.yml` l'essaie sur un téléphone virtuel Android 15, puis la publie. Une nouvelle version s'installe par-dessus l'ancienne. La clé de signature `cle-de-test-publique.jks` est volontairement publique : elle ne protège rien et sert seulement à ces mises à jour. La vraie appli aura sa propre clé, secrète.
+
 ## Si quelque chose ne va pas
 
 - **La carte dit « Mesures indisponibles »** : le premier passage n'a pas encore eu lieu. Refais l'étape 2 de la mise en route.
@@ -192,3 +217,5 @@ Testé avec de vrais appels : EMSC, USGS, aéroports (METAR), Sensor.Community, 
 Pas encore testé : OpenAQ (il faut une clé), et la tâche « maintien » (elle ne se lance que si le dépôt reste 45 jours sans commit).
 
 Le minuteur de GitHub n'a jamais lancé la collecte sur ce dépôt (cause inconnue), d'où cron-job.org (étape 4 de la mise en route). Testé pour de vrai : le lancement de 17 h 40 (heure de Paris) envoyé par cron-job.org est arrivé sur GitHub, et la collecte a réussi (séismes, Météo-France et aéroports mis à jour).
+
+Appli de test (26 octobre 2026) : compilée et analysée sans erreur, et essayée automatiquement sur un téléphone virtuel avant chaque publication. Le vrai résultat ne peut venir que de ton téléphone, après une nuit.

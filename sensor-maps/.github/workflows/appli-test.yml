@@ -1,0 +1,117 @@
+name: Appli de test
+
+# Fabrique l'appli de test (dossier appli-test), l'essaie sur un téléphone virtuel,
+# puis la publie sur la page « Releases » du dépôt, prête à installer depuis le téléphone.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'appli-test/**'
+      - '.github/workflows/appli-test.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: appli-test
+  cancel-in-progress: false
+
+jobs:
+  apk:
+    name: Fabriquer l'APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Récupérer le code
+        uses: actions/checkout@v4
+
+      - name: Installer Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      # Les outils Android sont déjà sur les serveurs de GitHub : on ajoute seulement la version 17.
+      # (L'action android-actions/setup-android@v3 ne marche plus : elle cherche un paquet supprimé.)
+      - name: Ajouter Android 17 aux outils Android
+        run: |
+          sdkm="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          [ -x "$sdkm" ] || sdkm=$(ls "$ANDROID_HOME"/cmdline-tools/*/bin/sdkmanager | sort -V | tail -n 1)
+          yes | "$sdkm" --licenses > /dev/null || true
+          "$sdkm" "platforms;android-37.0" "build-tools;36.0.0" > /dev/null
+
+      - name: Installer Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.6.1'
+
+      # Le numéro du passage devient le numéro de version : chaque APK s'installe par-dessus le précédent
+      - name: Fabriquer l'APK
+        env:
+          NUMERO_VERSION: ${{ github.run_number }}
+        run: gradle -p appli-test assembleRelease --no-daemon
+
+      - name: Renommer l'APK
+        run: cp appli-test/build/outputs/apk/release/sensor-maps-test-release.apk sensor-maps-test.apk
+
+      - name: Garder l'APK pour les étapes suivantes
+        uses: actions/upload-artifact@v4
+        with:
+          name: apk
+          path: sensor-maps-test.apk
+          retention-days: 7
+
+  essai:
+    name: Essai sur un téléphone virtuel
+    needs: apk
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Récupérer le code
+        uses: actions/checkout@v4
+
+      - name: Récupérer l'APK
+        uses: actions/download-artifact@v4
+        with:
+          name: apk
+
+      - name: Permettre à l'émulateur d'utiliser la virtualisation
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Lancer le téléphone virtuel et l'essai
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          script: bash appli-test/essai-emulateur.sh sensor-maps-test.apk
+
+  publication:
+    name: Publier dans Releases
+    needs: essai
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Récupérer l'APK
+        uses: actions/download-artifact@v4
+        with:
+          name: apk
+
+      - name: Créer la release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "appli-test-${{ github.run_number }}" sensor-maps-test.apk \
+            --repo "${{ github.repository }}" \
+            --target "${{ github.sha }}" \
+            --title "Appli de test n° ${{ github.run_number }}" \
+            --latest \
+            --notes "Appli de test de Sensor Maps, version test-${{ github.run_number }}. Sur le téléphone, touche sensor-maps-test.apk juste en dessous pour la télécharger, puis ouvre le fichier pour l'installer. Avant d'être publiée, elle a été essayée sur un téléphone virtuel Android 15 : aucun plantage."

@@ -3,7 +3,10 @@ import unittest
 from pathlib import Path
 
 RACINE = Path(__file__).resolve().parents[2]
-EXTENSIONS = {'.py', '.html', '.md', '.yml', '.yaml', '.txt', '.json', '.csv', '.js', '.css', '.xml'}
+EXTENSIONS = {'.py', '.html', '.md', '.yml', '.yaml', '.txt', '.json', '.csv', '.js', '.css', '.xml',
+              '.kt', '.kts', '.properties', '.sh'}
+# Dossiers fabriqués par les outils (compilation de l'appli de test), jamais envoyés sur GitHub
+IGNORES = {'.git', 'build', '.gradle', '.kotlin'}
 INTERDITS = {chr(0x2014): 'tiret long', chr(0x2013): 'tiret moyen'}
 
 
@@ -11,7 +14,7 @@ class TestTirets(unittest.TestCase):
     def test_aucun_tiret_long_ou_moyen(self):
         fautes = []
         for chemin in RACINE.rglob('*'):
-            if not chemin.is_file() or chemin.suffix not in EXTENSIONS or '.git' in chemin.parts:
+            if not chemin.is_file() or chemin.suffix not in EXTENSIONS or IGNORES & set(chemin.parts):
                 continue
             texte = chemin.read_text(encoding='utf-8', errors='replace')
             for n, ligne in enumerate(texte.splitlines(), 1):
