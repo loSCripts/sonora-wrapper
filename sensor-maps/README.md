@@ -11,6 +11,7 @@ La carte : https://loscripts.github.io/sensor-maps/
 - `web/` : la carte (`carte.html`), la page « Sources et licences » (`sources.html`), et `index.html` qui ouvre la carte.
 - `collector/` : le programme de collecte en Python. Un fichier par source dans `collector/sources/`, et des tests dans `collector/tests/`.
 - `appli-test/` : l'appli Android du test décisif, le début de l'étape 2 (voir « Appli de test » plus bas).
+- `A-FAIRE.md` : ce qui reste à faire plus tard, pour ne rien oublier d'une conversation à l'autre.
 - `.github/workflows/` : les trois tâches automatiques de GitHub.
   - `collecte.yml` : la collecte et la publication, toutes les 10 minutes. Elle évite aussi que GitHub coupe la collecte (voir plus bas).
   - `verifier.yml` : relance les tests à chaque modification du code.
@@ -128,7 +129,7 @@ Si le site lui-même ne répond pas au début du passage, rien n'est publié cet
 
 ## Appli de test (début de l'étape 2)
 
-Avant de construire la vraie appli de mesure, ce petit test vérifie sur **ton** téléphone ce qu'Android laisse faire quand l'écran est éteint. L'appli essaie de lire la **pression** (baromètre) et le **champ magnétique** (magnétomètre) pendant 10 secondes, de deux façons :
+Avant de construire la vraie appli de mesure, ce petit test vérifie sur **ton** téléphone ce qu'Android laisse faire quand l'écran est éteint. L'appli essaie de lire la **pression** (baromètre), le **champ magnétique** (magnétomètre) et la **lumière** pendant 10 secondes, de deux façons :
 
 1. **Réveil toutes les 15 minutes** : Android réveille l'appli, sans notification. C'est le plus court intervalle qu'Android accepte.
 2. **Après immobilité** : quand le téléphone devient immobile (Android le détecte), l'appli lance un court service avec une notification « Mesure en cours » pendant 10 secondes. Si Android refuse ce service, elle essaie de mesurer directement.
@@ -141,11 +142,12 @@ Chaque essai est noté dans un journal : l'heure, l'écran allumé ou éteint, l
 
 1. Ouvre l'appli **Test Sensor Maps**. La partie « Capteurs du téléphone » dit si ton téléphone a un baromètre.
 2. Appuie sur **Démarrer le test**, puis sur **Autoriser** pour l'activité physique et pour les notifications.
-3. Appuie sur **Mesurer maintenant (10 secondes)** : la pression et le champ magnétique doivent apparaître dans le journal.
+3. Appuie sur **Mesurer maintenant (10 secondes)** : une ligne avec les mesures doit apparaître dans le journal.
 4. Utilise ton téléphone normalement, puis laisse-le la nuit, comme d'habitude. Si tu peux, laisse-le aussi au moins 2 heures débranché, écran éteint et posé : c'est là qu'Android est le plus strict.
+   Si l'**économie d'énergie** est allumée, éteins-la pour la nuit si tu peux : avec elle, Android bloque presque tout, et le plan prévoit de toute façon que la vraie appli se mette en pause dans ce cas.
 5. Le lendemain, ouvre l'appli, appuie sur **Copier le journal**, puis colle-le dans la conversation avec Claude.
 
-**Arrêter** : **Arrêter le test**, puis désinstalle l'appli si tu veux.
+**Arrêter** : **Arrêter le test**, puis **Arrêter** pour confirmer. Désinstalle ensuite l'appli si tu veux.
 
 Chaque modification du dossier `appli-test/` fabrique une nouvelle version : la tâche `appli-test.yml` l'essaie sur un téléphone virtuel Android 15, puis la publie. Une nouvelle version s'installe par-dessus l'ancienne. La clé de signature `cle-de-test-publique.jks` est volontairement publique : elle ne protège rien et sert seulement à ces mises à jour. La vraie appli aura sa propre clé, secrète.
 

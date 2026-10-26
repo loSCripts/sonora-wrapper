@@ -15,7 +15,8 @@ toucher() {
   xy=$(python3 -c '
 import re, sys, xml.etree.ElementTree as ET
 for n in ET.parse("ecran.xml").iter("node"):
-    if n.get("text") == sys.argv[1]:
+    # Sans tenir compte des majuscules : certains thèmes écrivent les boutons en capitales
+    if (n.get("text") or "").casefold() == sys.argv[1].casefold():
         x1, y1, x2, y2 = map(int, re.findall(r"\d+", n.get("bounds")))
         print((x1 + x2) // 2, (y1 + y2) // 2)
         break
@@ -55,6 +56,9 @@ sleep 5
 adb shell am start -W -n $P/.EcranPrincipal
 sleep 3
 toucher "Arrêter le test"
+sleep 2
+# La confirmation qui évite d'arrêter le test par erreur
+toucher "Arrêter"
 sleep 3
 
 echo "===== Journal de l'appli ====="

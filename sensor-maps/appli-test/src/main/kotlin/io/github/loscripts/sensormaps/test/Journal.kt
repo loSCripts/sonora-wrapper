@@ -62,6 +62,7 @@ object Resume {
         e.putInt(m.cle + "_total", p.getInt(m.cle + "_total", 0) + 1)
         if ((r.pression?.nb ?: 0) > 0) e.putInt(m.cle + "_pression", p.getInt(m.cle + "_pression", 0) + 1)
         if ((r.magnetisme?.nb ?: 0) > 0) e.putInt(m.cle + "_magn", p.getInt(m.cle + "_magn", 0) + 1)
+        if ((r.lumiere?.nb ?: 0) > 0) e.putInt(m.cle + "_lumiere", p.getInt(m.cle + "_lumiere", 0) + 1)
         e.putLong(m.cle + "_dernier", System.currentTimeMillis())
         e.commit()
     }
@@ -77,8 +78,10 @@ object Resume {
         prefs(ctx).edit().clear().commit()
     }
 
-    fun texte(ctx: Context, aBarometre: Boolean): String {
+    fun texte(ctx: Context): String {
         val p = prefs(ctx)
+        val aBarometre = Capteurs.barometre(ctx) != null
+        val aLumiere = Capteurs.capteurLumiere(ctx) != null
         val lignes = mutableListOf<String>()
         fun bloc(m: Methode) {
             val total = p.getInt(m.cle + "_total", 0)
@@ -88,6 +91,7 @@ object Resume {
                 val recu = mutableListOf<String>()
                 if (aBarometre) recu += "pression reçue ${p.getInt(m.cle + "_pression", 0)} fois"
                 recu += "champ magnétique reçu ${p.getInt(m.cle + "_magn", 0)} fois"
+                if (aLumiere) recu += "lumière reçue ${p.getInt(m.cle + "_lumiere", 0)} fois"
                 lignes += "    " + recu.joinToString(", ")
             }
         }
@@ -117,7 +121,15 @@ object Texte {
         if (!l.inscrit) return "${l.nom} : capteur refusé par Android"
         val mediane = l.mediane() ?: return "${l.nom} : 0 lecture"
         return "${l.nom} : ${lectures(l.nb)}, la première après ${nombre(l.premiereApresMs / 1000f)} s, " +
-            "${nombre(mediane)} ${l.unite}"
+            "${nombre(mediane)} ${l.unite}" + if (l.avecPrecision) ", précision ${precision(l.precision)}" else ""
+    }
+
+    private fun precision(p: Int) = when (p) {
+        3 -> "haute"
+        2 -> "moyenne"
+        1 -> "basse"
+        0 -> "pas fiable"
+        else -> "inconnue ($p)"
     }
 
     fun etat(e: Etat): String {
@@ -137,5 +149,6 @@ object Texte {
         etat(e),
         lecture(r.pression, "pas de baromètre"),
         lecture(r.magnetisme, "pas de magnétomètre"),
+        lecture(r.lumiere, "pas de capteur de lumière"),
     ).joinToString(" | ")
 }

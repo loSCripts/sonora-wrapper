@@ -17,17 +17,19 @@ import android.os.SystemClock
 import kotlin.math.sqrt
 
 /** Ce qu'un capteur a envoyé pendant une rafale. */
-class Lecture(val nom: String, val unite: String) {
+class Lecture(val nom: String, val unite: String, val avecPrecision: Boolean = false) {
     var inscrit = false
     var nb = 0
     var premiereApresMs = -1L
+    // Précision annoncée par Android (3 haute, 2 moyenne, 1 basse, 0 pas fiable) : -2 si aucune lecture
+    var precision = -2
     val valeurs = ArrayList<Float>()
 
     fun mediane(): Float? = if (valeurs.isEmpty()) null else valeurs.sorted()[valeurs.size / 2]
 }
 
 /** Une rafale : null quand le téléphone n'a pas ce capteur. */
-class Rafale(val pression: Lecture?, val magnetisme: Lecture?)
+class Rafale(val pression: Lecture?, val magnetisme: Lecture?, val lumiere: Lecture?)
 
 /** L'état du téléphone au moment d'une mesure. */
 class Etat(
@@ -51,8 +53,11 @@ object Capteurs {
 
     fun magnetometre(ctx: Context): Sensor? = gestionnaire(ctx).getDefaultSensor(Sensor.TYPE_MAGNETIC_FIELD)
 
+    fun capteurLumiere(ctx: Context): Sensor? = gestionnaire(ctx).getDefaultSensor(Sensor.TYPE_LIGHT)
+
     /**
-     * Allume le baromètre et le magnétomètre pendant [dureeMs], compte ce qui arrive, puis éteint tout.
+     * Allume le baromètre, le magnétomètre et le capteur de lumière pendant [dureeMs],
+     * compte ce qui arrive, puis éteint tout.
      * Bloquant : à appeler hors du fil de l'écran.
      */
     fun rafale(ctx: Context, dureeMs: Long = DUREE_RAFALE_MS): Rafale {
@@ -60,8 +65,11 @@ object Capteurs {
         val sm = gestionnaire(app)
         val baro = sm.getDefaultSensor(Sensor.TYPE_PRESSURE)
         val magn = sm.getDefaultSensor(Sensor.TYPE_MAGNETIC_FIELD)
+        val lum = sm.getDefaultSensor(Sensor.TYPE_LIGHT)
         val pression = baro?.let { Lecture("pression", "hPa") }
-        val magnetisme = magn?.let { Lecture("champ magnétique", "µT") }
+        // La précision dit si la boussole est calibrée : utile pour comprendre une valeur étrange
+        val magnetisme = magn?.let { Lecture("champ magnétique", "µT", avecPrecision = true) }
+        val lumiere = lum?.let { Lecture("lumière", "lux") }
 
         // Le processeur doit rester éveillé pendant la rafale, sinon rien n'arrive écran éteint
         val pm = app.getSystemService(Context.POWER_SERVICE) as PowerManager
@@ -72,9 +80,15 @@ object Capteurs {
         val debut = SystemClock.elapsedRealtime()
         val ecouteur = object : SensorEventListener {
             override fun onSensorChanged(e: SensorEvent) {
-                val l = (if (e.sensor.type == Sensor.TYPE_PRESSURE) pression else magnetisme) ?: return
+                val l = when (e.sensor.type) {
+                    Sensor.TYPE_PRESSURE -> pression
+                    Sensor.TYPE_MAGNETIC_FIELD -> magnetisme
+                    Sensor.TYPE_LIGHT -> lumiere
+                    else -> null
+                } ?: return
                 if (l.nb == 0) l.premiereApresMs = SystemClock.elapsedRealtime() - debut
                 l.nb++
+                l.precision = e.accuracy
                 val v = if (e.sensor.type == Sensor.TYPE_MAGNETIC_FIELD) {
                     sqrt(e.values[0] * e.values[0] + e.values[1] * e.values[1] + e.values[2] * e.values[2])
                 } else {
@@ -93,6 +107,10 @@ object Capteurs {
             if (magn != null && magnetisme != null) {
                 magnetisme.inscrit = sm.registerListener(ecouteur, magn, SensorManager.SENSOR_DELAY_NORMAL, h)
             }
+            // La lumière ne prévient que quand elle change : une seule lecture dans le noir, c'est normal
+            if (lum != null && lumiere != null) {
+                lumiere.inscrit = sm.registerListener(ecouteur, lum, SensorManager.SENSOR_DELAY_NORMAL, h)
+            }
             Thread.sleep(dureeMs)
         } catch (_: InterruptedException) {
         } finally {
@@ -101,7 +119,7 @@ object Capteurs {
             fil.join(2_000)
             if (eveil.isHeld) eveil.release()
         }
-        return Rafale(pression, magnetisme)
+        return Rafale(pression, magnetisme, lumiere)
     }
 
     fun etat(ctx: Context): Etat {

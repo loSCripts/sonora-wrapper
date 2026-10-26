@@ -102,7 +102,7 @@ class EcranPrincipal : Activity() {
             "Test arrêté."
         }
         boutonTest.text = if (actif) "Arrêter le test" else "Démarrer le test"
-        texteResume.text = Resume.texte(this, Capteurs.barometre(this) != null)
+        texteResume.text = Resume.texte(this)
         val lignes = Journal.lire(this).lines().filter { it.isNotBlank() }
         texteJournal.text = if (lignes.isEmpty()) "Le journal est vide." else lignes.takeLast(80).reversed().joinToString("\n")
     }
@@ -110,16 +110,25 @@ class EcranPrincipal : Activity() {
     private fun descriptionCapteurs(): String {
         val b = Capteurs.barometre(this)
         val m = Capteurs.magnetometre(this)
+        val l = Capteurs.capteurLumiere(this)
         return "Baromètre (pression) : " + (b?.let { "oui, ${it.name} (${it.vendor})" } ?: "non, ce téléphone n'en a pas") +
             "\nMagnétomètre (champ magnétique) : " + (m?.let { "oui, ${it.name} (${it.vendor})" } ?: "non") +
+            "\nCapteur de lumière : " + (l?.let { "oui, ${it.name} (${it.vendor})" } ?: "non") +
             "\nTéléphone : ${Build.MANUFACTURER} ${Build.MODEL}, Android ${Build.VERSION.RELEASE}" +
             "\nAppli : version ${BuildConfig.VERSION_NAME}"
     }
 
     private fun basculerTest() {
         if (Planif.actif(this)) {
-            Planif.arreter(this)
-            afficher()
+            // Une confirmation : un appui de trop ne doit pas couper le test de la nuit
+            AlertDialog.Builder(this)
+                .setMessage("Arrêter le test ? Les mesures s'arrêteront jusqu'au prochain démarrage.")
+                .setPositiveButton("Arrêter") { _, _ ->
+                    Planif.arreter(this)
+                    afficher()
+                }
+                .setNegativeButton("Annuler", null)
+                .show()
             return
         }
         val manquantes = mutableListOf<String>()
@@ -147,6 +156,7 @@ class EcranPrincipal : Activity() {
         )
         Planif.demarrer(this)
         afficher()
+        Toast.makeText(this, "Test démarré : tu peux éteindre l'écran", Toast.LENGTH_LONG).show()
     }
 
     private fun mesurerMaintenant() {
@@ -172,7 +182,7 @@ class EcranPrincipal : Activity() {
     // Le résumé, puis le journal du plus ancien au plus récent
     private fun texteComplet(): String =
         "Journal du test Sensor Maps\n\n" + descriptionCapteurs() + "\n\n" +
-            Resume.texte(this, Capteurs.barometre(this) != null) + "\n\nJournal :\n" +
+            Resume.texte(this) + "\n\nJournal :\n" +
             Journal.lire(this).takeLast(200_000)
 
     private fun copier() {
