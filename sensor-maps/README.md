@@ -12,6 +12,7 @@ La carte : https://loscripts.github.io/sensor-maps/
 - `collector/` : le programme de collecte en Python. Un fichier par source dans `collector/sources/`, et des tests dans `collector/tests/`.
 - `appli-test/` : l'appli Android du test décisif, le début de l'étape 2 (voir « Appli de test » plus bas).
 - `A-FAIRE.md` : ce qui reste à faire plus tard, pour ne rien oublier d'une conversation à l'autre.
+- `PASSATION-interface-appli.md` : le contexte à donner à une nouvelle conversation pour créer l'identité et l'interface de l'appli.
 - `.github/workflows/` : les trois tâches automatiques de GitHub.
   - `collecte.yml` : la collecte et la publication, toutes les 10 minutes. Elle évite aussi que GitHub coupe la collecte (voir plus bas).
   - `verifier.yml` : relance les tests à chaque modification du code.
