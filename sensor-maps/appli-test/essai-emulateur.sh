@@ -7,24 +7,44 @@ set -euo pipefail
 APK="$1"
 P=io.github.loscripts.sensormaps.test
 
-# Touche le bouton dont le texte est donné, en le cherchant dans l'écran affiché
-toucher() {
+# Donne le centre du bouton dont le texte est donné, s'il est visible à l'écran
+trouver() {
   adb shell uiautomator dump /sdcard/ecran.xml >/dev/null
   adb pull /sdcard/ecran.xml ecran.xml >/dev/null
-  local xy
-  xy=$(python3 -c '
+  python3 -c '
 import re, sys, xml.etree.ElementTree as ET
 for n in ET.parse("ecran.xml").iter("node"):
     # Sans tenir compte des majuscules : certains thèmes écrivent les boutons en capitales
     if (n.get("text") or "").casefold() == sys.argv[1].casefold():
         x1, y1, x2, y2 = map(int, re.findall(r"\d+", n.get("bounds")))
         print((x1 + x2) // 2, (y1 + y2) // 2)
-        break
-else:
-    sys.exit("Bouton introuvable : " + sys.argv[1])
-' "$1")
-  echo "On touche « $1 »"
-  adb shell input tap $xy
+        sys.exit(0)
+sys.exit(1)
+' "$1"
+}
+
+# Touche le bouton dont le texte est donné. S'il est hors de l'écran, on remonte en haut
+# de la page, puis on descend petit à petit, comme avec le doigt.
+toucher() {
+  local xy taille l h essai
+  taille=$(adb shell wm size | grep -oE '[0-9]+x[0-9]+' | tail -n 1)
+  l=${taille%x*}
+  h=${taille#*x}
+  for essai in 1 2 3 4 5 6 7; do
+    if xy=$(trouver "$1"); then
+      echo "On touche « $1 »"
+      adb shell input tap $xy
+      return 0
+    fi
+    if [ "$essai" -eq 1 ]; then
+      for _ in 1 2 3; do adb shell input swipe $((l / 2)) $((h * 3 / 10)) $((l / 2)) $((h * 8 / 10)) 200; done
+    else
+      adb shell input swipe $((l / 2)) $((h * 7 / 10)) $((l / 2)) $((h * 4 / 10)) 400
+    fi
+    sleep 1
+  done
+  echo "Bouton introuvable : $1"
+  return 1
 }
 
 adb install -r "$APK"
